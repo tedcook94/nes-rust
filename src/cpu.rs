@@ -22,7 +22,24 @@ impl Cpu {
     }
 
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
-        0
+        let opcode = self.fetch_byte(bus);
+        let cycles = match opcode {
+            0xA9 => {
+                let operand = self.fetch_byte(bus);
+                self.registers.a = operand;
+                self.status.set_zero_and_negative(operand);
+                2
+            }
+            _ => panic!("unimplemented opcode {:#04X}", opcode),
+        };
+        self.cycle_count += u64::from(cycles);
+        cycles
+    }
+
+    fn fetch_byte<T: Bus>(&mut self, bus: &mut T) -> u8 {
+        let byte = bus.read(self.registers.pc);
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        byte
     }
 }
 
@@ -53,11 +70,45 @@ impl Status {
     fn is_set(&self, flag: u8) -> bool {
         self.0 & flag != 0
     }
+
+    fn set_zero_and_negative(&mut self, value: u8) {
+        self.set(Status::ZERO, value == 0x00);
+        self.set(Status::NEGATIVE, value & 0x80 != 0); // check bit 7 (sign bit)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestBus([u8; 0x10000]);
+
+    impl TestBus {
+        fn new() -> Self {
+            TestBus([0; 0x10000])
+        }
+    }
+
+    impl Bus for TestBus {
+        fn read(&mut self, address: u16) -> u8 {
+            self.0[address as usize]
+        }
+        fn write(&mut self, address: u16, byte: u8) {
+            self.0[address as usize] = byte
+        }
+    }
+
+    const STARTING_ADDRESS: u16 = 0x8000;
+
+    fn create_test_cpu_and_bus(bytes_to_write: &[u8]) -> (Cpu, TestBus) {
+        let mut cpu = Cpu::new();
+        cpu.registers.pc = STARTING_ADDRESS;
+        let mut bus = TestBus::new();
+        for (i, &v) in bytes_to_write.iter().enumerate() {
+            bus.0[(STARTING_ADDRESS as usize) + i] = v;
+        }
+        (cpu, bus)
+    }
 
     #[test]
     fn cpu_powers_on_in_proper_state() {
@@ -167,5 +218,47 @@ mod tests {
         status.set(Status::OVERFLOW, false);
         status.set(Status::NEGATIVE, false);
         assert_eq!(status.0, Status::UNUSED);
+    }
+
+    #[test]
+    fn lda_immediate_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA9, 0x42]);
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x42, "A = {:#04X}", cpu.registers.a);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.cycle_count, 2);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn lda_immediate_sets_zero_flag() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA9, 0x00]);
+        cpu.registers.a = 0xFF;
+        cpu.status.set(Status::NEGATIVE, true);
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x00, "A = {:#04X}", cpu.registers.a);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.cycle_count, 2);
+        assert!(cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn lda_immediate_sets_negative_flag() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA9, 0x80]);
+        cpu.registers.a = 0xFF;
+        cpu.status.set(Status::ZERO, true);
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x80, "A = {:#04X}", cpu.registers.a);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.cycle_count, 2);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(cpu.status.is_set(Status::NEGATIVE));
     }
 }
