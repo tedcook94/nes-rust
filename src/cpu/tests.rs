@@ -1067,3 +1067,242 @@ fn sty_absolute_stores_value() {
     assert_eq!(cpu.cycle_count, 4);
     assert_eq!(cpu.status.0, status);
 }
+
+// Transfers
+#[test]
+fn tax_transfers_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xAA]);
+    cpu.registers.a = 0x42;
+    cpu.registers.x = 0xEE;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.x, 0x42, "X = {:#04X}", cpu.registers.x);
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tax_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xAA]);
+    cpu.registers.a = 0x00;
+    cpu.registers.x = 0xEE;
+    cpu.status.set(Status::NEGATIVE, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.x, 0x00);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tax_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xAA]);
+    cpu.registers.a = 0x80;
+    cpu.status.set(Status::ZERO, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.x, 0x80);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tay_transfers_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA8]);
+    cpu.registers.a = 0x42;
+    cpu.registers.x = 0x11; // decoy: X must not change
+    cpu.registers.y = 0xEE;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.y, 0x42, "Y = {:#04X}", cpu.registers.y);
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.x, 0x11);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn tay_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA8]);
+    cpu.registers.a = 0x00;
+    cpu.registers.y = 0xEE;
+    cpu.status.set(Status::NEGATIVE, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.y, 0x00);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tay_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA8]);
+    cpu.registers.a = 0x80;
+    cpu.status.set(Status::ZERO, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.y, 0x80);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn txa_transfers_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x8A]);
+    cpu.registers.x = 0x42;
+    cpu.registers.y = 0x11; // decoy: Y must not be the source
+    cpu.registers.a = 0xEE;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.x, 0x42);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn txa_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x8A]);
+    cpu.registers.x = 0x00;
+    cpu.registers.a = 0xEE;
+    cpu.status.set(Status::NEGATIVE, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn txa_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x8A]);
+    cpu.registers.x = 0x80;
+    cpu.status.set(Status::ZERO, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x80);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tya_transfers_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x98]);
+    cpu.registers.y = 0x42;
+    cpu.registers.x = 0x11; // decoy: X must not be the source
+    cpu.registers.a = 0xEE;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.y, 0x42);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn tya_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x98]);
+    cpu.registers.y = 0x00;
+    cpu.registers.a = 0xEE;
+    cpu.status.set(Status::NEGATIVE, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tya_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x98]);
+    cpu.registers.y = 0x80;
+    cpu.status.set(Status::ZERO, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x80);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tsx_transfers_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xBA]);
+    cpu.registers.sp = 0x42;
+    cpu.registers.x = 0xEE;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.x, 0x42, "X = {:#04X}", cpu.registers.x);
+    assert_eq!(cpu.registers.sp, 0x42);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn tsx_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xBA]);
+    cpu.registers.sp = 0x00;
+    cpu.registers.x = 0xEE;
+    cpu.status.set(Status::NEGATIVE, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.x, 0x00);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn tsx_sets_negative_flag() {
+    // Power-on SP is $FD, which has bit 7 set.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xBA]);
+    cpu.status.set(Status::ZERO, true);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.x, 0xFD);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn txs_transfers_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x9A]);
+    cpu.registers.x = 0x42;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.sp, 0x42, "SP = {:#04X}", cpu.registers.sp);
+    assert_eq!(cpu.registers.x, 0x42);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn txs_does_not_set_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x9A]);
+    cpu.registers.x = 0x00;
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.sp, 0x00);
+    assert_eq!(cpu.status.0, status);
+}
+
+#[test]
+fn txs_does_not_set_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x9A]);
+    cpu.registers.x = 0x80;
+    cpu.status.set(Status::ZERO, true);
+    let status = cpu.status.0;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.sp, 0x80);
+    assert_eq!(cpu.status.0, status);
+}

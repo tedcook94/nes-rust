@@ -167,6 +167,37 @@ impl Cpu {
                 self.store(bus, Absolute, self.registers.y);
                 4
             }
+            // Transfers
+            0xAA => {
+                self.registers.x = self.registers.a;
+                self.status.set_zero_and_negative(self.registers.x);
+                2
+            }
+            0xA8 => {
+                self.registers.y = self.registers.a;
+                self.status.set_zero_and_negative(self.registers.y);
+                2
+            }
+            0xBA => {
+                self.registers.x = self.registers.sp;
+                self.status.set_zero_and_negative(self.registers.x);
+                2
+            }
+            0x8A => {
+                self.registers.a = self.registers.x;
+                self.status.set_zero_and_negative(self.registers.a);
+                2
+            }
+            0x9A => {
+                self.registers.sp = self.registers.x;
+                // TXS  is the only transfer that doesn't set flags
+                2
+            }
+            0x98 => {
+                self.registers.a = self.registers.y;
+                self.status.set_zero_and_negative(self.registers.a);
+                2
+            }
             _ => panic!("unimplemented opcode {:#04X}", opcode),
         };
         self.cycle_count += u64::from(cycles);
