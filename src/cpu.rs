@@ -11,6 +11,7 @@ enum AddressingMode {
     Immediate,
     ZeroPage,
     ZeroPageX,
+    ZeroPageY,
     Absolute,
     AbsoluteX,
     AbsoluteY,
@@ -36,6 +37,7 @@ impl Cpu {
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
         let opcode = self.fetch_byte(bus);
         let cycles = match opcode {
+            // LDA
             0xA9 => {
                 let _ = self.lda(bus, Immediate);
                 2
@@ -67,6 +69,27 @@ impl Cpu {
             0xB1 => {
                 let page_crossed = self.lda(bus, IndirectY);
                 if page_crossed { 6 } else { 5 }
+            }
+            // LDX
+            0xA2 => {
+                let _ = self.ldx(bus, Immediate);
+                2
+            }
+            0xA6 => {
+                let _ = self.ldx(bus, ZeroPage);
+                3
+            }
+            0xB6 => {
+                let _ = self.ldx(bus, ZeroPageY);
+                4
+            }
+            0xAE => {
+                let _ = self.ldx(bus, Absolute);
+                4
+            }
+            0xBE => {
+                let page_crossed = self.ldx(bus, AbsoluteY);
+                if page_crossed { 5 } else { 4 }
             }
             _ => panic!("unimplemented opcode {:#04X}", opcode),
         };
@@ -104,6 +127,10 @@ impl Cpu {
                 u16::from(self.fetch_byte(bus).wrapping_add(self.registers.x)),
                 false,
             ),
+            ZeroPageY => (
+                u16::from(self.fetch_byte(bus).wrapping_add(self.registers.y)),
+                false,
+            ),
             Absolute => (self.fetch_word(bus), false),
             AbsoluteX => self.get_indexed_address(bus, self.registers.x),
             AbsoluteY => self.get_indexed_address(bus, self.registers.y),
@@ -136,6 +163,14 @@ impl Cpu {
         let (address, page_crossed) = self.get_address_by_mode(bus, mode);
         let operand = bus.read(address);
         self.registers.a = operand;
+        self.status.set_zero_and_negative(operand);
+        page_crossed
+    }
+
+    fn ldx<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode) -> bool {
+        let (address, page_crossed) = self.get_address_by_mode(bus, mode);
+        let operand = bus.read(address);
+        self.registers.x = operand;
         self.status.set_zero_and_negative(operand);
         page_crossed
     }
@@ -220,6 +255,7 @@ mod tests {
         assert_eq!(cpu.cycle_count, 0);
     }
 
+    // Status
     #[test]
     fn set_carry_returns_is_set() {
         let mut status = Status(0);
@@ -318,6 +354,7 @@ mod tests {
         assert_eq!(status.0, Status::UNUSED);
     }
 
+    // LDA
     #[test]
     fn lda_immediate_loads_value() {
         let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA9, 0x42]);
@@ -584,6 +621,151 @@ mod tests {
         let cycles = cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x11, "A = {:#04X}", cpu.registers.a);
         assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.cycle_count, 5);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    // LDX
+    #[test]
+    fn ldx_immediate_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA2, 0x42]);
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x42, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.cycle_count, 2);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_immediate_sets_zero_flag() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA2, 0x00]);
+        cpu.registers.x = 0xFF;
+        cpu.status.set(Status::NEGATIVE, true);
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x00, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.cycle_count, 2);
+        assert!(cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_immediate_sets_negative_flag() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA2, 0x80]);
+        cpu.registers.x = 0xFF;
+        cpu.status.set(Status::ZERO, true);
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x80, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.cycle_count, 2);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_zero_page_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xA6, 0x10]);
+        bus.0[0x10] = 0x01;
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x01, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.cycle_count, 3);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_zero_page_y_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xB6, 0x10]);
+        cpu.registers.y = 0x01;
+        bus.0[0x11] = 0x01;
+        bus.0[0x10] = 0x11; // decoy value at provided address
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x01, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.cycle_count, 4);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_zero_page_y_with_wraparound_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xB6, 0xFF]);
+        cpu.registers.y = 0x01;
+        bus.0[0x00] = 0x01;
+        bus.0[0xFF] = 0x11; // decoy value at provided address
+        bus.0[0x100] = 0x10; // decoy value at address when adding as u16
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x01, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.cycle_count, 4);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_absolute_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xAE, 0x10, 0x01]);
+        bus.0[0x0110] = 0x11;
+        bus.0[0x1001] = 0xFF; // decoy value at inverted address
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x11, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.cycle_count, 4);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_absolute_y_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xBE, 0x10, 0x01]);
+        cpu.registers.y = 0x01;
+        bus.0[0x0111] = 0x11;
+        bus.0[0x0110] = 0xFF; // decoy value at provided address
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x11, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.cycle_count, 4);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_absolute_y_with_page_crossed_loads_value() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xBE, 0xFF, 0x01]);
+        cpu.registers.y = 0x01;
+        bus.0[0x0200] = 0x11;
+        bus.0[0x0100] = 0xFF; // decoy value at mis-added address
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x11, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.cycle_count, 5);
+        assert!(!cpu.status.is_set(Status::ZERO));
+        assert!(!cpu.status.is_set(Status::NEGATIVE));
+    }
+
+    #[test]
+    fn ldx_absolute_y_wraps_around_address_space() {
+        let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xBE, 0xFF, 0xFF]);
+        cpu.registers.y = 0x01;
+        bus.0[0x0000] = 0x11;
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cpu.registers.x, 0x11, "X = {:#04X}", cpu.registers.x);
+        assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
         assert_eq!(cycles, 5);
         assert_eq!(cpu.cycle_count, 5);
         assert!(!cpu.status.is_set(Status::ZERO));
