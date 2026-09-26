@@ -37,6 +37,23 @@ impl Cpu {
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
         let opcode = self.fetch_byte(bus);
         let cycles = match opcode {
+            // Clear flags
+            0x18 => {
+                self.status.set(Status::CARRY, false);
+                2
+            }
+            0xD8 => {
+                self.status.set(Status::DECIMAL_MODE, false);
+                2
+            }
+            0x58 => {
+                self.status.set(Status::INTERRUPT_DISABLE, false);
+                2
+            }
+            0xB8 => {
+                self.status.set(Status::OVERFLOW, false);
+                2
+            }
             // LDA
             0xA9 => {
                 let _ = self.lda(bus, Immediate);
@@ -111,6 +128,19 @@ impl Cpu {
             0xBC => {
                 let page_crossed = self.ldy(bus, AbsoluteX);
                 if page_crossed { 5 } else { 4 }
+            }
+            // Set flags
+            0x38 => {
+                self.status.set(Status::CARRY, true);
+                2
+            }
+            0xF8 => {
+                self.status.set(Status::DECIMAL_MODE, true);
+                2
+            }
+            0x78 => {
+                self.status.set(Status::INTERRUPT_DISABLE, true);
+                2
             }
             // STA
             0x85 => {
@@ -190,7 +220,7 @@ impl Cpu {
             }
             0x9A => {
                 self.registers.sp = self.registers.x;
-                // TXS  is the only transfer that doesn't set flags
+                // TXS is the only transfer that doesn't set flags
                 2
             }
             0x98 => {

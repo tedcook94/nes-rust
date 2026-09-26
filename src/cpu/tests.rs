@@ -140,6 +140,55 @@ fn can_clear_all_used_flags() {
     assert_eq!(status.0, Status::UNUSED);
 }
 
+// Clear flags
+#[test]
+fn clc_clears_carry_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x18]);
+    cpu.status = Status(0xFF);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0xFF & !Status::CARRY);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cld_clears_decimal_mode_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD8]);
+    cpu.status = Status(0xFF);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0xFF & !Status::DECIMAL_MODE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cli_clears_interrupt_disable_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x58]);
+    cpu.status = Status(0xFF);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0xFF & !Status::INTERRUPT_DISABLE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn clv_clears_overflow_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xB8]);
+    cpu.status = Status(0xFF);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0xFF & !Status::OVERFLOW);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
 // LDA
 #[test]
 fn lda_immediate_loads_value() {
@@ -706,6 +755,43 @@ fn ldy_absolute_x_wraps_around_address_space() {
     assert_eq!(cpu.cycle_count, 5);
     assert!(!cpu.status.is_set(Status::ZERO));
     assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+// Set flags
+#[test]
+fn sec_sets_carry_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x38]);
+    cpu.status = Status(0x00);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0x00 | Status::CARRY);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sed_sets_decimal_mode_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF8]);
+    cpu.status = Status(0x00);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0x00 | Status::DECIMAL_MODE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sei_sets_interrupt_disable_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x78]);
+    cpu.status = Status(0x00);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0x00 | Status::INTERRUPT_DISABLE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
 }
 
 // STA
