@@ -718,7 +718,7 @@ fn sta_zero_page_stores_value() {
     let status = cpu.status.0;
 
     let cycles = cpu.step(&mut bus);
-    assert_eq!(bus.0[0x10], 0x01, "Address 0x10 = {:#04X}", bus.0[0x10]);
+    assert_eq!(bus.0[0x10], 0x01, "$10 = {:#04X}", bus.0[0x10]);
     assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
     assert_eq!(cycles, 3);
     assert_eq!(cpu.cycle_count, 3);
@@ -928,4 +928,142 @@ fn sta_indirect_y_pointer_wraps() {
     assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
     assert_eq!(cycles, 6);
     assert_eq!(cpu.cycle_count, 6);
+}
+
+// STX
+#[test]
+fn stx_zero_page_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x86, 0x10]);
+    cpu.registers.x = 0x01;
+    cpu.status.set(Status::ZERO, true);
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x01, "$10 = {:#04X}", bus.0[0x10]);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+    assert_eq!(cpu.status.0, status);
+}
+
+#[test]
+fn stx_zero_page_y_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x96, 0x10]);
+    cpu.registers.x = 0x42;
+    cpu.registers.y = 0x04;
+    cpu.status.set(Status::ZERO, true);
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+    bus.0[0x10] = 0xEE; // decoy: base address without Y
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x42, "$14 = {:#04X}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+    assert_eq!(cpu.status.0, status);
+}
+
+#[test]
+fn stx_zero_page_y_with_wraparound_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x96, 0xFF]);
+    cpu.registers.x = 0x42;
+    cpu.registers.y = 0x02;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x42, "$01 = {:#04X}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn stx_absolute_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x8E, 0x34, 0x12]);
+    cpu.registers.x = 0x42;
+    cpu.status.set(Status::ZERO, true);
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x42, "$1234 = {:#04X}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+    assert_eq!(cpu.status.0, status);
+}
+
+// STY
+#[test]
+fn sty_zero_page_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x84, 0x10]);
+    cpu.registers.y = 0x01;
+    cpu.status.set(Status::ZERO, true);
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x01, "$10 = {:#04X}", bus.0[0x10]);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+    assert_eq!(cpu.status.0, status);
+}
+
+#[test]
+fn sty_zero_page_x_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x94, 0x10]);
+    cpu.registers.y = 0x42;
+    cpu.registers.x = 0x04;
+    cpu.status.set(Status::ZERO, true);
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x42, "$14 = {:#04X}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+    assert_eq!(cpu.status.0, status);
+}
+
+#[test]
+fn sty_zero_page_x_with_wraparound_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x94, 0xFF]);
+    cpu.registers.y = 0x42;
+    cpu.registers.x = 0x02;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x42, "$01 = {:#04X}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn sty_absolute_stores_value() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x8C, 0x34, 0x12]);
+    cpu.registers.y = 0x42;
+    cpu.status.set(Status::ZERO, true);
+    cpu.status.set(Status::NEGATIVE, true);
+    let status = cpu.status.0;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x42, "$1234 = {:#04X}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+    assert_eq!(cpu.status.0, status);
 }

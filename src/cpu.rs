@@ -114,32 +114,58 @@ impl Cpu {
             }
             // STA
             0x85 => {
-                self.sta(bus, ZeroPage);
+                self.store(bus, ZeroPage, self.registers.a);
                 3
             }
             0x95 => {
-                self.sta(bus, ZeroPageX);
+                self.store(bus, ZeroPageX, self.registers.a);
                 4
             }
             0x8D => {
-                self.sta(bus, Absolute);
+                self.store(bus, Absolute, self.registers.a);
                 4
             }
             0x9D => {
-                self.sta(bus, AbsoluteX);
+                self.store(bus, AbsoluteX, self.registers.a);
                 5
             }
             0x99 => {
-                self.sta(bus, AbsoluteY);
+                self.store(bus, AbsoluteY, self.registers.a);
                 5
             }
             0x81 => {
-                self.sta(bus, IndirectX);
+                self.store(bus, IndirectX, self.registers.a);
                 6
             }
             0x91 => {
-                self.sta(bus, IndirectY);
+                self.store(bus, IndirectY, self.registers.a);
                 6
+            }
+            // STX
+            0x86 => {
+                self.store(bus, ZeroPage, self.registers.x);
+                3
+            }
+            0x96 => {
+                self.store(bus, ZeroPageY, self.registers.x);
+                4
+            }
+            0x8E => {
+                self.store(bus, Absolute, self.registers.x);
+                4
+            }
+            // STY
+            0x84 => {
+                self.store(bus, ZeroPage, self.registers.y);
+                3
+            }
+            0x94 => {
+                self.store(bus, ZeroPageX, self.registers.y);
+                4
+            }
+            0x8C => {
+                self.store(bus, Absolute, self.registers.y);
+                4
             }
             _ => panic!("unimplemented opcode {:#04X}", opcode),
         };
@@ -235,9 +261,9 @@ impl Cpu {
         page_crossed
     }
 
-    fn sta<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode) {
+    fn store<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, value: u8) {
         let (address, _) = self.get_address_by_mode(bus, mode);
-        bus.write(address, self.registers.a);
+        bus.write(address, value);
     }
 }
 
