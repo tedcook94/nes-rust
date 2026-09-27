@@ -40,56 +40,56 @@ impl Cpu {
         let cycles = match opcode {
             // AND
             0x29 => {
-                self.logical(bus, Immediate, |a, m| a & m);
+                self.logical(bus, Immediate, ops::and);
                 2
             }
             0x25 => {
-                self.logical(bus, ZeroPage, |a, m| a & m);
+                self.logical(bus, ZeroPage, ops::and);
                 3
             }
             0x35 => {
-                self.logical(bus, ZeroPageX, |a, m| a & m);
+                self.logical(bus, ZeroPageX, ops::and);
                 4
             }
             0x2D => {
-                self.logical(bus, Absolute, |a, m| a & m);
+                self.logical(bus, Absolute, ops::and);
                 4
             }
             0x3D => {
-                let page_crossed = self.logical(bus, AbsoluteX, |a, m| a & m);
+                let page_crossed = self.logical(bus, AbsoluteX, ops::and);
                 if page_crossed { 5 } else { 4 }
             }
             0x39 => {
-                let page_crossed = self.logical(bus, AbsoluteY, |a, m| a & m);
+                let page_crossed = self.logical(bus, AbsoluteY, ops::and);
                 if page_crossed { 5 } else { 4 }
             }
             0x21 => {
-                self.logical(bus, IndirectX, |a, m| a & m);
+                self.logical(bus, IndirectX, ops::and);
                 6
             }
             0x31 => {
-                let page_crossed = self.logical(bus, IndirectY, |a, m| a & m);
+                let page_crossed = self.logical(bus, IndirectY, ops::and);
                 if page_crossed { 6 } else { 5 }
             }
             // ASL
             0x0A => {
-                self.shift(bus, Accumulator, |v, _| (v << 1, v & 0x80 != 0));
+                self.shift(bus, Accumulator, ops::asl);
                 2
             }
             0x06 => {
-                self.shift(bus, ZeroPage, |v, _| (v << 1, v & 0x80 != 0));
+                self.shift(bus, ZeroPage, ops::asl);
                 5
             }
             0x16 => {
-                self.shift(bus, ZeroPageX, |v, _| (v << 1, v & 0x80 != 0));
+                self.shift(bus, ZeroPageX, ops::asl);
                 6
             }
             0x0E => {
-                self.shift(bus, Absolute, |v, _| (v << 1, v & 0x80 != 0));
+                self.shift(bus, Absolute, ops::asl);
                 6
             }
             0x1E => {
-                self.shift(bus, AbsoluteX, |v, _| (v << 1, v & 0x80 != 0));
+                self.shift(bus, AbsoluteX, ops::asl);
                 7
             }
             // BIT
@@ -182,19 +182,19 @@ impl Cpu {
             }
             // DEC
             0xC6 => {
-                self.modify(bus, ZeroPage, |v| v.wrapping_sub(1));
+                self.modify(bus, ZeroPage, ops::dec);
                 5
             }
             0xD6 => {
-                self.modify(bus, ZeroPageX, |v| v.wrapping_sub(1));
+                self.modify(bus, ZeroPageX, ops::dec);
                 6
             }
             0xCE => {
-                self.modify(bus, Absolute, |v| v.wrapping_sub(1));
+                self.modify(bus, Absolute, ops::dec);
                 6
             }
             0xDE => {
-                self.modify(bus, AbsoluteX, |v| v.wrapping_sub(1));
+                self.modify(bus, AbsoluteX, ops::dec);
                 7
             }
             // DEX
@@ -211,52 +211,52 @@ impl Cpu {
             }
             // EOR
             0x49 => {
-                self.logical(bus, Immediate, |a, m| a ^ m);
+                self.logical(bus, Immediate, ops::eor);
                 2
             }
             0x45 => {
-                self.logical(bus, ZeroPage, |a, m| a ^ m);
+                self.logical(bus, ZeroPage, ops::eor);
                 3
             }
             0x55 => {
-                self.logical(bus, ZeroPageX, |a, m| a ^ m);
+                self.logical(bus, ZeroPageX, ops::eor);
                 4
             }
             0x4D => {
-                self.logical(bus, Absolute, |a, m| a ^ m);
+                self.logical(bus, Absolute, ops::eor);
                 4
             }
             0x5D => {
-                let page_crossed = self.logical(bus, AbsoluteX, |a, m| a ^ m);
+                let page_crossed = self.logical(bus, AbsoluteX, ops::eor);
                 if page_crossed { 5 } else { 4 }
             }
             0x59 => {
-                let page_crossed = self.logical(bus, AbsoluteY, |a, m| a ^ m);
+                let page_crossed = self.logical(bus, AbsoluteY, ops::eor);
                 if page_crossed { 5 } else { 4 }
             }
             0x41 => {
-                self.logical(bus, IndirectX, |a, m| a ^ m);
+                self.logical(bus, IndirectX, ops::eor);
                 6
             }
             0x51 => {
-                let page_crossed = self.logical(bus, IndirectY, |a, m| a ^ m);
+                let page_crossed = self.logical(bus, IndirectY, ops::eor);
                 if page_crossed { 6 } else { 5 }
             }
             // INC
             0xE6 => {
-                self.modify(bus, ZeroPage, |v| v.wrapping_add(1));
+                self.modify(bus, ZeroPage, ops::inc);
                 5
             }
             0xF6 => {
-                self.modify(bus, ZeroPageX, |v| v.wrapping_add(1));
+                self.modify(bus, ZeroPageX, ops::inc);
                 6
             }
             0xEE => {
-                self.modify(bus, Absolute, |v| v.wrapping_add(1));
+                self.modify(bus, Absolute, ops::inc);
                 6
             }
             0xFE => {
-                self.modify(bus, AbsoluteX, |v| v.wrapping_add(1));
+                self.modify(bus, AbsoluteX, ops::inc);
                 7
             }
             // INX
@@ -273,193 +273,173 @@ impl Cpu {
             }
             // LDA
             0xA9 => {
-                self.load(bus, Immediate, |r, v| r.a = v);
+                self.load(bus, Immediate, ops::lda);
                 2
             }
             0xA5 => {
-                self.load(bus, ZeroPage, |r, v| r.a = v);
+                self.load(bus, ZeroPage, ops::lda);
                 3
             }
             0xB5 => {
-                self.load(bus, ZeroPageX, |r, v| r.a = v);
+                self.load(bus, ZeroPageX, ops::lda);
                 4
             }
             0xAD => {
-                self.load(bus, Absolute, |r, v| r.a = v);
+                self.load(bus, Absolute, ops::lda);
                 4
             }
             0xBD => {
-                let page_crossed = self.load(bus, AbsoluteX, |r, v| r.a = v);
+                let page_crossed = self.load(bus, AbsoluteX, ops::lda);
                 if page_crossed { 5 } else { 4 }
             }
             0xB9 => {
-                let page_crossed = self.load(bus, AbsoluteY, |r, v| r.a = v);
+                let page_crossed = self.load(bus, AbsoluteY, ops::lda);
                 if page_crossed { 5 } else { 4 }
             }
             0xA1 => {
-                self.load(bus, IndirectX, |r, v| r.a = v);
+                self.load(bus, IndirectX, ops::lda);
                 6
             }
             0xB1 => {
-                let page_crossed = self.load(bus, IndirectY, |r, v| r.a = v);
+                let page_crossed = self.load(bus, IndirectY, ops::lda);
                 if page_crossed { 6 } else { 5 }
             }
             // LDX
             0xA2 => {
-                self.load(bus, Immediate, |r, v| r.x = v);
+                self.load(bus, Immediate, ops::ldx);
                 2
             }
             0xA6 => {
-                self.load(bus, ZeroPage, |r, v| r.x = v);
+                self.load(bus, ZeroPage, ops::ldx);
                 3
             }
             0xB6 => {
-                self.load(bus, ZeroPageY, |r, v| r.x = v);
+                self.load(bus, ZeroPageY, ops::ldx);
                 4
             }
             0xAE => {
-                self.load(bus, Absolute, |r, v| r.x = v);
+                self.load(bus, Absolute, ops::ldx);
                 4
             }
             0xBE => {
-                let page_crossed = self.load(bus, AbsoluteY, |r, v| r.x = v);
+                let page_crossed = self.load(bus, AbsoluteY, ops::ldx);
                 if page_crossed { 5 } else { 4 }
             }
             // LDY
             0xA0 => {
-                self.load(bus, Immediate, |r, v| r.y = v);
+                self.load(bus, Immediate, ops::ldy);
                 2
             }
             0xA4 => {
-                self.load(bus, ZeroPage, |r, v| r.y = v);
+                self.load(bus, ZeroPage, ops::ldy);
                 3
             }
             0xB4 => {
-                self.load(bus, ZeroPageX, |r, v| r.y = v);
+                self.load(bus, ZeroPageX, ops::ldy);
                 4
             }
             0xAC => {
-                self.load(bus, Absolute, |r, v| r.y = v);
+                self.load(bus, Absolute, ops::ldy);
                 4
             }
             0xBC => {
-                let page_crossed = self.load(bus, AbsoluteX, |r, v| r.y = v);
+                let page_crossed = self.load(bus, AbsoluteX, ops::ldy);
                 if page_crossed { 5 } else { 4 }
             }
             // LSR
             0x4A => {
-                self.shift(bus, Accumulator, |v, _| (v >> 1, v & 0x01 != 0));
+                self.shift(bus, Accumulator, ops::lsr);
                 2
             }
             0x46 => {
-                self.shift(bus, ZeroPage, |v, _| (v >> 1, v & 0x01 != 0));
+                self.shift(bus, ZeroPage, ops::lsr);
                 5
             }
             0x56 => {
-                self.shift(bus, ZeroPageX, |v, _| (v >> 1, v & 0x01 != 0));
+                self.shift(bus, ZeroPageX, ops::lsr);
                 6
             }
             0x4E => {
-                self.shift(bus, Absolute, |v, _| (v >> 1, v & 0x01 != 0));
+                self.shift(bus, Absolute, ops::lsr);
                 6
             }
             0x5E => {
-                self.shift(bus, AbsoluteX, |v, _| (v >> 1, v & 0x01 != 0));
+                self.shift(bus, AbsoluteX, ops::lsr);
                 7
             }
             // ORA
             0x09 => {
-                self.logical(bus, Immediate, |a, m| a | m);
+                self.logical(bus, Immediate, ops::ora);
                 2
             }
             0x05 => {
-                self.logical(bus, ZeroPage, |a, m| a | m);
+                self.logical(bus, ZeroPage, ops::ora);
                 3
             }
             0x15 => {
-                self.logical(bus, ZeroPageX, |a, m| a | m);
+                self.logical(bus, ZeroPageX, ops::ora);
                 4
             }
             0x0D => {
-                self.logical(bus, Absolute, |a, m| a | m);
+                self.logical(bus, Absolute, ops::ora);
                 4
             }
             0x1D => {
-                let page_crossed = self.logical(bus, AbsoluteX, |a, m| a | m);
+                let page_crossed = self.logical(bus, AbsoluteX, ops::ora);
                 if page_crossed { 5 } else { 4 }
             }
             0x19 => {
-                let page_crossed = self.logical(bus, AbsoluteY, |a, m| a | m);
+                let page_crossed = self.logical(bus, AbsoluteY, ops::ora);
                 if page_crossed { 5 } else { 4 }
             }
             0x01 => {
-                self.logical(bus, IndirectX, |a, m| a | m);
+                self.logical(bus, IndirectX, ops::ora);
                 6
             }
             0x11 => {
-                let page_crossed = self.logical(bus, IndirectY, |a, m| a | m);
+                let page_crossed = self.logical(bus, IndirectY, ops::ora);
                 if page_crossed { 6 } else { 5 }
             }
             // ROL
             0x2A => {
-                self.shift(bus, Accumulator, |v, c| {
-                    ((v << 1) | u8::from(c), v & 0x80 != 0)
-                });
+                self.shift(bus, Accumulator, ops::rol);
                 2
             }
             0x26 => {
-                self.shift(bus, ZeroPage, |v, c| {
-                    ((v << 1) | u8::from(c), v & 0x80 != 0)
-                });
+                self.shift(bus, ZeroPage, ops::rol);
                 5
             }
             0x36 => {
-                self.shift(bus, ZeroPageX, |v, c| {
-                    ((v << 1) | u8::from(c), v & 0x80 != 0)
-                });
+                self.shift(bus, ZeroPageX, ops::rol);
                 6
             }
             0x2E => {
-                self.shift(bus, Absolute, |v, c| {
-                    ((v << 1) | u8::from(c), v & 0x80 != 0)
-                });
+                self.shift(bus, Absolute, ops::rol);
                 6
             }
             0x3E => {
-                self.shift(bus, AbsoluteX, |v, c| {
-                    ((v << 1) | u8::from(c), v & 0x80 != 0)
-                });
+                self.shift(bus, AbsoluteX, ops::rol);
                 7
             }
             // ROR
             0x6A => {
-                self.shift(bus, Accumulator, |v, c| {
-                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
-                });
+                self.shift(bus, Accumulator, ops::ror);
                 2
             }
             0x66 => {
-                self.shift(bus, ZeroPage, |v, c| {
-                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
-                });
+                self.shift(bus, ZeroPage, ops::ror);
                 5
             }
             0x76 => {
-                self.shift(bus, ZeroPageX, |v, c| {
-                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
-                });
+                self.shift(bus, ZeroPageX, ops::ror);
                 6
             }
             0x6E => {
-                self.shift(bus, Absolute, |v, c| {
-                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
-                });
+                self.shift(bus, Absolute, ops::ror);
                 6
             }
             0x7E => {
-                self.shift(bus, AbsoluteX, |v, c| {
-                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
-                });
+                self.shift(bus, AbsoluteX, ops::ror);
                 7
             }
             // SEC
@@ -721,7 +701,7 @@ impl Cpu {
     }
 }
 
-struct Registers {
+pub struct Registers {
     a: u8,
     x: u8,
     y: u8,
@@ -754,6 +734,8 @@ impl Status {
         self.set(Status::NEGATIVE, value & 0x80 != 0); // check bit 7 (sign bit)
     }
 }
+
+mod ops;
 
 #[cfg(test)]
 mod tests;
