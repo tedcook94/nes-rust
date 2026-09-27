@@ -37,24 +37,69 @@ impl Cpu {
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
         let opcode = self.fetch_byte(bus);
         let cycles = match opcode {
-            // Clear flags
+            // AND
+            0x29 => {
+                self.logical(bus, Immediate, |a, m| a & m);
+                2
+            }
+            0x25 => {
+                self.logical(bus, ZeroPage, |a, m| a & m);
+                3
+            }
+            0x35 => {
+                self.logical(bus, ZeroPageX, |a, m| a & m);
+                4
+            }
+            0x2D => {
+                self.logical(bus, Absolute, |a, m| a & m);
+                4
+            }
+            0x3D => {
+                let page_crossed = self.logical(bus, AbsoluteX, |a, m| a & m);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x39 => {
+                let page_crossed = self.logical(bus, AbsoluteY, |a, m| a & m);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x21 => {
+                self.logical(bus, IndirectX, |a, m| a & m);
+                6
+            }
+            0x31 => {
+                let page_crossed = self.logical(bus, IndirectY, |a, m| a & m);
+                if page_crossed { 6 } else { 5 }
+            }
+            // BIT
+            0x24 => {
+                self.bit(bus, ZeroPage);
+                3
+            }
+            0x2C => {
+                self.bit(bus, Absolute);
+                4
+            }
+            // CLC
             0x18 => {
                 self.status.set(Status::CARRY, false);
                 2
             }
+            // CLD
             0xD8 => {
                 self.status.set(Status::DECIMAL_MODE, false);
                 2
             }
+            // CLI
             0x58 => {
                 self.status.set(Status::INTERRUPT_DISABLE, false);
                 2
             }
+            // CLV
             0xB8 => {
                 self.status.set(Status::OVERFLOW, false);
                 2
             }
-            // Decrement
+            // DEC
             0xC6 => {
                 self.modify(bus, ZeroPage, |v| v.wrapping_sub(1));
                 5
@@ -71,17 +116,52 @@ impl Cpu {
                 self.modify(bus, AbsoluteX, |v| v.wrapping_sub(1));
                 7
             }
+            // DEX
             0xCA => {
                 self.registers.x = self.registers.x.wrapping_sub(1);
                 self.status.set_zero_and_negative(self.registers.x);
                 2
             }
+            // DEY
             0x88 => {
                 self.registers.y = self.registers.y.wrapping_sub(1);
                 self.status.set_zero_and_negative(self.registers.y);
                 2
             }
-            // Increment
+            // EOR
+            0x49 => {
+                self.logical(bus, Immediate, |a, m| a ^ m);
+                2
+            }
+            0x45 => {
+                self.logical(bus, ZeroPage, |a, m| a ^ m);
+                3
+            }
+            0x55 => {
+                self.logical(bus, ZeroPageX, |a, m| a ^ m);
+                4
+            }
+            0x4D => {
+                self.logical(bus, Absolute, |a, m| a ^ m);
+                4
+            }
+            0x5D => {
+                let page_crossed = self.logical(bus, AbsoluteX, |a, m| a ^ m);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x59 => {
+                let page_crossed = self.logical(bus, AbsoluteY, |a, m| a ^ m);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x41 => {
+                self.logical(bus, IndirectX, |a, m| a ^ m);
+                6
+            }
+            0x51 => {
+                let page_crossed = self.logical(bus, IndirectY, |a, m| a ^ m);
+                if page_crossed { 6 } else { 5 }
+            }
+            // INC
             0xE6 => {
                 self.modify(bus, ZeroPage, |v| v.wrapping_add(1));
                 5
@@ -98,11 +178,13 @@ impl Cpu {
                 self.modify(bus, AbsoluteX, |v| v.wrapping_add(1));
                 7
             }
+            // INX
             0xE8 => {
                 self.registers.x = self.registers.x.wrapping_add(1);
                 self.status.set_zero_and_negative(self.registers.x);
                 2
             }
+            // INY
             0xC8 => {
                 self.registers.y = self.registers.y.wrapping_add(1);
                 self.status.set_zero_and_negative(self.registers.y);
@@ -183,15 +265,50 @@ impl Cpu {
                 let page_crossed = self.load(bus, AbsoluteX, |r, v| r.y = v);
                 if page_crossed { 5 } else { 4 }
             }
-            // Set flags
+            // ORA
+            0x09 => {
+                self.logical(bus, Immediate, |a, m| a | m);
+                2
+            }
+            0x05 => {
+                self.logical(bus, ZeroPage, |a, m| a | m);
+                3
+            }
+            0x15 => {
+                self.logical(bus, ZeroPageX, |a, m| a | m);
+                4
+            }
+            0x0D => {
+                self.logical(bus, Absolute, |a, m| a | m);
+                4
+            }
+            0x1D => {
+                let page_crossed = self.logical(bus, AbsoluteX, |a, m| a | m);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x19 => {
+                let page_crossed = self.logical(bus, AbsoluteY, |a, m| a | m);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x01 => {
+                self.logical(bus, IndirectX, |a, m| a | m);
+                6
+            }
+            0x11 => {
+                let page_crossed = self.logical(bus, IndirectY, |a, m| a | m);
+                if page_crossed { 6 } else { 5 }
+            }
+            // SEC
             0x38 => {
                 self.status.set(Status::CARRY, true);
                 2
             }
+            // SED
             0xF8 => {
                 self.status.set(Status::DECIMAL_MODE, true);
                 2
             }
+            // SEI
             0x78 => {
                 self.status.set(Status::INTERRUPT_DISABLE, true);
                 2
@@ -251,32 +368,37 @@ impl Cpu {
                 self.store(bus, Absolute, self.registers.y);
                 4
             }
-            // Transfers
+            // TAX
             0xAA => {
                 self.registers.x = self.registers.a;
                 self.status.set_zero_and_negative(self.registers.x);
                 2
             }
+            // TAY
             0xA8 => {
                 self.registers.y = self.registers.a;
                 self.status.set_zero_and_negative(self.registers.y);
                 2
             }
+            // TSX
             0xBA => {
                 self.registers.x = self.registers.sp;
                 self.status.set_zero_and_negative(self.registers.x);
                 2
             }
+            // TXA
             0x8A => {
                 self.registers.a = self.registers.x;
                 self.status.set_zero_and_negative(self.registers.a);
                 2
             }
+            // TXS
             0x9A => {
                 self.registers.sp = self.registers.x;
                 // TXS is the only transfer that doesn't set flags
                 2
             }
+            // TYA
             0x98 => {
                 self.registers.a = self.registers.y;
                 self.status.set_zero_and_negative(self.registers.a);
@@ -377,6 +499,26 @@ impl Cpu {
         let value = f(bus.read(address));
         bus.write(address, value);
         self.status.set_zero_and_negative(value);
+    }
+
+    fn logical<T: Bus>(
+        &mut self,
+        bus: &mut T,
+        mode: AddressingMode,
+        f: impl FnOnce(u8, u8) -> u8,
+    ) -> bool {
+        let (operand, page_crossed) = self.read_operand(bus, mode);
+        self.registers.a = f(self.registers.a, operand);
+        self.status.set_zero_and_negative(self.registers.a);
+        page_crossed
+    }
+
+    fn bit<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode) {
+        let (operand, _) = self.read_operand(bus, mode);
+        self.status
+            .set(Status::ZERO, self.registers.a & operand == 0);
+        self.status.set(Status::NEGATIVE, operand & 0x80 != 0); // check bit 7 (sign bit)
+        self.status.set(Status::OVERFLOW, operand & 0x40 != 0); // check bit 6 (overflow bit)
     }
 }
 
