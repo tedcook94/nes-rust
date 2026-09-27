@@ -191,6 +191,119 @@ fn clv_clears_overflow_flag() {
 
 // Decrement
 #[test]
+fn dec_zero_page_decrements_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC6, 0x10]);
+    cpu.registers.a = 0x11;
+    cpu.status = Status(0xFF);
+    bus.0[0x10] = 0x43;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x42, "$10 = {:#04X}", bus.0[0x10]);
+    assert_eq!(cpu.registers.a, 0x11); // decoy: DEC must not touch A
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn dec_wraps_around_and_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC6, 0x10]);
+    cpu.status = Status(0x00);
+    bus.0[0x10] = 0x00;
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0xFF, "$10 = {:#04X}", bus.0[0x10]);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn dec_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC6, 0x10]);
+    cpu.status = Status(0x00);
+    bus.0[0x10] = 0x01;
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x00, "$10 = {:#04X}", bus.0[0x10]);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn dec_zero_page_x_decrements_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD6, 0x10]);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x43;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x42, "$14 = {:#04X}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.x, 0x04);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn dec_zero_page_x_with_wraparound_decrements_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD6, 0xFF]);
+    cpu.registers.x = 0x02;
+    bus.0[0x01] = 0x43;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x42, "$01 = {:#04X}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cycles, 6);
+}
+
+#[test]
+fn dec_absolute_decrements_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xCE, 0x34, 0x12]);
+    bus.0[0x1234] = 0x43;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x42, "$1234 = {:#04X}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn dec_absolute_x_decrements_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xDE, 0x00, 0x12]);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x43;
+    bus.0[0x1200] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1204], 0x42, "$1204 = {:#04X}", bus.0[0x1204]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn dec_absolute_x_with_page_crossed_has_no_extra_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xDE, 0xFF, 0x12]);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x43;
+    bus.0[0x1200] = 0xEE; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1300], 0x42, "$1300 = {:#04X}", bus.0[0x1300]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
 fn dex_decrements_x() {
     let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xCA]);
     cpu.registers.x = 0x11;
@@ -281,6 +394,119 @@ fn dey_sets_zero_flag() {
 }
 
 // Increment
+#[test]
+fn inc_zero_page_increments_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE6, 0x10]);
+    cpu.registers.a = 0x11;
+    cpu.status = Status(0xFF);
+    bus.0[0x10] = 0x41;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x42, "$10 = {:#04X}", bus.0[0x10]);
+    assert_eq!(cpu.registers.a, 0x11); // decoy: INC must not touch A
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn inc_wraps_around_and_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE6, 0x10]);
+    cpu.status = Status(0x00);
+    bus.0[0x10] = 0xFF;
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x00, "$10 = {:#04X}", bus.0[0x10]);
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert!(!cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn inc_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE6, 0x10]);
+    cpu.status = Status(0x00);
+    bus.0[0x10] = 0x7F;
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x80, "$10 = {:#04X}", bus.0[0x10]);
+    assert!(!cpu.status.is_set(Status::ZERO));
+    assert!(cpu.status.is_set(Status::NEGATIVE));
+}
+
+#[test]
+fn inc_zero_page_x_increments_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF6, 0x10]);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x41;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x42, "$14 = {:#04X}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.x, 0x04);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn inc_zero_page_x_with_wraparound_increments_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF6, 0xFF]);
+    cpu.registers.x = 0x02;
+    bus.0[0x01] = 0x41;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x42, "$01 = {:#04X}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cycles, 6);
+}
+
+#[test]
+fn inc_absolute_increments_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xEE, 0x34, 0x12]);
+    bus.0[0x1234] = 0x41;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x42, "$1234 = {:#04X}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn inc_absolute_x_increments_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xFE, 0x00, 0x12]);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x41;
+    bus.0[0x1200] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1204], 0x42, "$1204 = {:#04X}", bus.0[0x1204]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn inc_absolute_x_with_page_crossed_has_no_extra_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xFE, 0xFF, 0x12]);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x41;
+    bus.0[0x1200] = 0xEE; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1300], 0x42, "$1300 = {:#04X}", bus.0[0x1300]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
 #[test]
 fn inx_increments_x() {
     let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE8]);

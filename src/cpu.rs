@@ -55,6 +55,22 @@ impl Cpu {
                 2
             }
             // Decrement
+            0xC6 => {
+                self.modify(bus, ZeroPage, |v| v.wrapping_sub(1));
+                5
+            }
+            0xD6 => {
+                self.modify(bus, ZeroPageX, |v| v.wrapping_sub(1));
+                6
+            }
+            0xCE => {
+                self.modify(bus, Absolute, |v| v.wrapping_sub(1));
+                6
+            }
+            0xDE => {
+                self.modify(bus, AbsoluteX, |v| v.wrapping_sub(1));
+                7
+            }
             0xCA => {
                 self.registers.x = self.registers.x.wrapping_sub(1);
                 self.status.set_zero_and_negative(self.registers.x);
@@ -66,6 +82,22 @@ impl Cpu {
                 2
             }
             // Increment
+            0xE6 => {
+                self.modify(bus, ZeroPage, |v| v.wrapping_add(1));
+                5
+            }
+            0xF6 => {
+                self.modify(bus, ZeroPageX, |v| v.wrapping_add(1));
+                6
+            }
+            0xEE => {
+                self.modify(bus, Absolute, |v| v.wrapping_add(1));
+                6
+            }
+            0xFE => {
+                self.modify(bus, AbsoluteX, |v| v.wrapping_add(1));
+                7
+            }
             0xE8 => {
                 self.registers.x = self.registers.x.wrapping_add(1);
                 self.status.set_zero_and_negative(self.registers.x);
@@ -347,6 +379,13 @@ impl Cpu {
     fn store<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, value: u8) {
         let (address, _) = self.get_address_by_mode(bus, mode);
         bus.write(address, value);
+    }
+
+    fn modify<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, f: impl FnOnce(u8) -> u8) {
+        let (address, _) = self.get_address_by_mode(bus, mode);
+        let value = f(bus.read(address));
+        bus.write(address, value);
+        self.status.set_zero_and_negative(value);
     }
 }
 
