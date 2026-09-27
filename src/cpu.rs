@@ -99,6 +99,65 @@ impl Cpu {
                 self.status.set(Status::OVERFLOW, false);
                 2
             }
+            // CMP
+            0xC9 => {
+                self.compare(bus, Immediate, self.registers.a);
+                2
+            }
+            0xC5 => {
+                self.compare(bus, ZeroPage, self.registers.a);
+                3
+            }
+            0xD5 => {
+                self.compare(bus, ZeroPageX, self.registers.a);
+                4
+            }
+            0xCD => {
+                self.compare(bus, Absolute, self.registers.a);
+                4
+            }
+            0xDD => {
+                let page_crossed = self.compare(bus, AbsoluteX, self.registers.a);
+                if page_crossed { 5 } else { 4 }
+            }
+            0xD9 => {
+                let page_crossed = self.compare(bus, AbsoluteY, self.registers.a);
+                if page_crossed { 5 } else { 4 }
+            }
+            0xC1 => {
+                self.compare(bus, IndirectX, self.registers.a);
+                6
+            }
+            0xD1 => {
+                let page_crossed = self.compare(bus, IndirectY, self.registers.a);
+                if page_crossed { 6 } else { 5 }
+            }
+            // CPX
+            0xE0 => {
+                self.compare(bus, Immediate, self.registers.x);
+                2
+            }
+            0xE4 => {
+                self.compare(bus, ZeroPage, self.registers.x);
+                3
+            }
+            0xEC => {
+                self.compare(bus, Absolute, self.registers.x);
+                4
+            }
+            // CPY
+            0xC0 => {
+                self.compare(bus, Immediate, self.registers.y);
+                2
+            }
+            0xC4 => {
+                self.compare(bus, ZeroPage, self.registers.y);
+                3
+            }
+            0xCC => {
+                self.compare(bus, Absolute, self.registers.y);
+                4
+            }
             // DEC
             0xC6 => {
                 self.modify(bus, ZeroPage, |v| v.wrapping_sub(1));
@@ -489,9 +548,9 @@ impl Cpu {
         page_crossed
     }
 
-    fn store<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, value: u8) {
+    fn store<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, register: u8) {
         let (address, _) = self.get_address_by_mode(bus, mode);
-        bus.write(address, value);
+        bus.write(address, register);
     }
 
     fn modify<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, f: impl FnOnce(u8) -> u8) {
@@ -519,6 +578,14 @@ impl Cpu {
             .set(Status::ZERO, self.registers.a & operand == 0);
         self.status.set(Status::NEGATIVE, operand & 0x80 != 0); // check bit 7 (sign bit)
         self.status.set(Status::OVERFLOW, operand & 0x40 != 0); // check bit 6 (overflow bit)
+    }
+
+    fn compare<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, register: u8) -> bool {
+        let (operand, page_crossed) = self.read_operand(bus, mode);
+        self.status.set(Status::CARRY, register >= operand);
+        self.status
+            .set_zero_and_negative(register.wrapping_sub(operand));
+        page_crossed
     }
 }
 

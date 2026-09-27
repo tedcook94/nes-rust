@@ -2468,3 +2468,544 @@ fn bit_absolute_tests_memory() {
     assert_eq!(cycles, 4);
     assert_eq!(cpu.cycle_count, 4);
 }
+
+// Compares
+
+// C, Z and N are the only flags a compare may change.
+const CZN: u8 = Status::CARRY | Status::ZERO | Status::NEGATIVE;
+
+// CMP
+
+#[test]
+fn cmp_greater_sets_carry() {
+    // $42 - $10 = $32
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC9, 0x10]);
+    cpu.registers.a = 0x42;
+    let expected = Status::CARRY;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.a, 0x42); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cmp_equal_sets_carry_and_zero() {
+    // $42 - $42 = $00
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC9, 0x42]);
+    cpu.registers.a = 0x42;
+    let expected = Status::CARRY | Status::ZERO;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.a, 0x42); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cmp_less_clears_carry_and_sets_negative() {
+    // $10 - $42 = $CE
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC9, 0x42]);
+    cpu.registers.a = 0x10;
+    let expected = Status::NEGATIVE;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.a, 0x10); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cmp_negative_comes_from_result_not_comparison() {
+    // $01 - $FF = $02: less, but bit 7 clear
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC9, 0xFF]);
+    cpu.registers.a = 0x01;
+    let expected = 0;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.a, 0x01); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cmp_greater_with_result_bit_7_set() {
+    // $FF - $01 = $FE: greater, but bit 7 set
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC9, 0x01]);
+    cpu.registers.a = 0xFF;
+    let expected = Status::CARRY | Status::NEGATIVE;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.a, 0xFF); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+// CPX
+
+#[test]
+fn cpx_greater_sets_carry() {
+    // $42 - $10 = $32
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE0, 0x10]);
+    cpu.registers.x = 0x42;
+    let expected = Status::CARRY;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.x, 0x42); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpx_equal_sets_carry_and_zero() {
+    // $42 - $42 = $00
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE0, 0x42]);
+    cpu.registers.x = 0x42;
+    let expected = Status::CARRY | Status::ZERO;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.x, 0x42); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpx_less_clears_carry_and_sets_negative() {
+    // $10 - $42 = $CE
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE0, 0x42]);
+    cpu.registers.x = 0x10;
+    let expected = Status::NEGATIVE;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.x, 0x10); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpx_negative_comes_from_result_not_comparison() {
+    // $01 - $FF = $02: less, but bit 7 clear
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE0, 0xFF]);
+    cpu.registers.x = 0x01;
+    let expected = 0;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.x, 0x01); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpx_greater_with_result_bit_7_set() {
+    // $FF - $01 = $FE: greater, but bit 7 set
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE0, 0x01]);
+    cpu.registers.x = 0xFF;
+    let expected = Status::CARRY | Status::NEGATIVE;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.x, 0xFF); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+// CPY
+
+#[test]
+fn cpy_greater_sets_carry() {
+    // $42 - $10 = $32
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC0, 0x10]);
+    cpu.registers.y = 0x42;
+    let expected = Status::CARRY;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.y, 0x42); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpy_equal_sets_carry_and_zero() {
+    // $42 - $42 = $00
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC0, 0x42]);
+    cpu.registers.y = 0x42;
+    let expected = Status::CARRY | Status::ZERO;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.y, 0x42); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpy_less_clears_carry_and_sets_negative() {
+    // $10 - $42 = $CE
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC0, 0x42]);
+    cpu.registers.y = 0x10;
+    let expected = Status::NEGATIVE;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.y, 0x10); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpy_negative_comes_from_result_not_comparison() {
+    // $01 - $FF = $02: less, but bit 7 clear
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC0, 0xFF]);
+    cpu.registers.y = 0x01;
+    let expected = 0;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.y, 0x01); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn cpy_greater_with_result_bit_7_set() {
+    // $FF - $01 = $FE: greater, but bit 7 set
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC0, 0x01]);
+    cpu.registers.y = 0xFF;
+    let expected = Status::CARRY | Status::NEGATIVE;
+    // C/Z/N start opposite to the expected result; other flags are set as decoys.
+    cpu.status = Status((!expected & CZN) | !CZN);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, expected | !CZN, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.y, 0xFF); // compare must not store the result
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+// CMP addressing modes
+
+#[test]
+fn cmp_zero_page_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC5, 0x10]);
+    cpu.registers.a = 0x42;
+    bus.0[0x10] = 0x42;
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x10], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn cmp_zero_page_x_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD5, 0x10]);
+    cpu.registers.a = 0x42;
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x42;
+    bus.0[0x10] = 0xFF; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x14], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn cmp_absolute_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xCD, 0x34, 0x12]);
+    cpu.registers.a = 0x42;
+    bus.0[0x1234] = 0x42;
+    bus.0[0x3412] = 0xFF; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1234], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn cmp_absolute_x_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xDD, 0x00, 0x12]);
+    cpu.registers.a = 0x42;
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x42;
+    bus.0[0x1200] = 0xFF; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1204], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn cmp_absolute_x_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xDD, 0xFF, 0x12]);
+    cpu.registers.a = 0x42;
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x42;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1300], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn cmp_absolute_y_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD9, 0x00, 0x12]);
+    cpu.registers.a = 0x42;
+    cpu.registers.y = 0x04;
+    bus.0[0x1204] = 0x42;
+    bus.0[0x1200] = 0xFF; // decoy: base address without Y
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1204], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn cmp_absolute_y_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD9, 0xFF, 0x12]);
+    cpu.registers.a = 0x42;
+    cpu.registers.y = 0x01;
+    bus.0[0x1300] = 0x42;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1300], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn cmp_indirect_x_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC1, 0x10]);
+    cpu.registers.a = 0x42;
+    // $10 + X → $14 → pointer $1234
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x34;
+    bus.0[0x15] = 0x12;
+    bus.0[0x1234] = 0x42;
+    bus.0[0x10] = 0x00; // decoy pointer without X → $2000
+    bus.0[0x11] = 0x20;
+    bus.0[0x2000] = 0xFF;
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1234], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn cmp_indirect_y_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD1, 0x10]);
+    cpu.registers.a = 0x42;
+    // $10 → pointer $1234 + Y → $1238
+    cpu.registers.x = 0x02; // should be ignored
+    cpu.registers.y = 0x04;
+    bus.0[0x10] = 0x34;
+    bus.0[0x11] = 0x12;
+    bus.0[0x1238] = 0x42;
+    bus.0[0x1234] = 0xFF; // decoy: pointer without Y
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1238], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn cmp_indirect_y_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD1, 0x10]);
+    cpu.registers.a = 0x42;
+    // $10 → pointer $12FF + Y → $1300
+    cpu.registers.y = 0x01;
+    bus.0[0x10] = 0xFF;
+    bus.0[0x11] = 0x12;
+    bus.0[0x1300] = 0x42;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(bus.0[0x1300], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+// CPX addressing modes
+
+#[test]
+fn cpx_zero_page_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE4, 0x10]);
+    cpu.registers.x = 0x42;
+    bus.0[0x10] = 0x42;
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.x, 0x42);
+    assert_eq!(bus.0[0x10], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn cpx_absolute_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xEC, 0x34, 0x12]);
+    cpu.registers.x = 0x42;
+    bus.0[0x1234] = 0x42;
+    bus.0[0x3412] = 0xFF; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.x, 0x42);
+    assert_eq!(bus.0[0x1234], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// CPY addressing modes
+
+#[test]
+fn cpy_zero_page_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xC4, 0x10]);
+    cpu.registers.y = 0x42;
+    bus.0[0x10] = 0x42;
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.y, 0x42);
+    assert_eq!(bus.0[0x10], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn cpy_absolute_compares_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xCC, 0x34, 0x12]);
+    cpu.registers.y = 0x42;
+    bus.0[0x1234] = 0x42;
+    bus.0[0x3412] = 0xFF; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    // Equal values set C and Z; a decoy read of $FF would clear both.
+    assert!(cpu.status.is_set(Status::CARRY));
+    assert!(cpu.status.is_set(Status::ZERO));
+    assert_eq!(cpu.registers.y, 0x42);
+    assert_eq!(bus.0[0x1234], 0x42); // compare must not write memory
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
