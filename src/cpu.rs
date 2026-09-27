@@ -110,77 +110,77 @@ impl Cpu {
             }
             // LDA
             0xA9 => {
-                let _ = self.lda(bus, Immediate);
+                self.load(bus, Immediate, |r, v| r.a = v);
                 2
             }
             0xA5 => {
-                let _ = self.lda(bus, ZeroPage);
+                self.load(bus, ZeroPage, |r, v| r.a = v);
                 3
             }
             0xB5 => {
-                let _ = self.lda(bus, ZeroPageX);
+                self.load(bus, ZeroPageX, |r, v| r.a = v);
                 4
             }
             0xAD => {
-                let _ = self.lda(bus, Absolute);
+                self.load(bus, Absolute, |r, v| r.a = v);
                 4
             }
             0xBD => {
-                let page_crossed = self.lda(bus, AbsoluteX);
+                let page_crossed = self.load(bus, AbsoluteX, |r, v| r.a = v);
                 if page_crossed { 5 } else { 4 }
             }
             0xB9 => {
-                let page_crossed = self.lda(bus, AbsoluteY);
+                let page_crossed = self.load(bus, AbsoluteY, |r, v| r.a = v);
                 if page_crossed { 5 } else { 4 }
             }
             0xA1 => {
-                let _ = self.lda(bus, IndirectX);
+                self.load(bus, IndirectX, |r, v| r.a = v);
                 6
             }
             0xB1 => {
-                let page_crossed = self.lda(bus, IndirectY);
+                let page_crossed = self.load(bus, IndirectY, |r, v| r.a = v);
                 if page_crossed { 6 } else { 5 }
             }
             // LDX
             0xA2 => {
-                let _ = self.ldx(bus, Immediate);
+                self.load(bus, Immediate, |r, v| r.x = v);
                 2
             }
             0xA6 => {
-                let _ = self.ldx(bus, ZeroPage);
+                self.load(bus, ZeroPage, |r, v| r.x = v);
                 3
             }
             0xB6 => {
-                let _ = self.ldx(bus, ZeroPageY);
+                self.load(bus, ZeroPageY, |r, v| r.x = v);
                 4
             }
             0xAE => {
-                let _ = self.ldx(bus, Absolute);
+                self.load(bus, Absolute, |r, v| r.x = v);
                 4
             }
             0xBE => {
-                let page_crossed = self.ldx(bus, AbsoluteY);
+                let page_crossed = self.load(bus, AbsoluteY, |r, v| r.x = v);
                 if page_crossed { 5 } else { 4 }
             }
             // LDY
             0xA0 => {
-                let _ = self.ldy(bus, Immediate);
+                self.load(bus, Immediate, |r, v| r.y = v);
                 2
             }
             0xA4 => {
-                let _ = self.ldy(bus, ZeroPage);
+                self.load(bus, ZeroPage, |r, v| r.y = v);
                 3
             }
             0xB4 => {
-                let _ = self.ldy(bus, ZeroPageX);
+                self.load(bus, ZeroPageX, |r, v| r.y = v);
                 4
             }
             0xAC => {
-                let _ = self.ldy(bus, Absolute);
+                self.load(bus, Absolute, |r, v| r.y = v);
                 4
             }
             0xBC => {
-                let page_crossed = self.ldy(bus, AbsoluteX);
+                let page_crossed = self.load(bus, AbsoluteX, |r, v| r.y = v);
                 if page_crossed { 5 } else { 4 }
             }
             // Set flags
@@ -355,23 +355,14 @@ impl Cpu {
         (bus.read(address), page_crossed)
     }
 
-    fn lda<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode) -> bool {
+    fn load<T: Bus>(
+        &mut self,
+        bus: &mut T,
+        mode: AddressingMode,
+        f: impl FnOnce(&mut Registers, u8),
+    ) -> bool {
         let (operand, page_crossed) = self.read_operand(bus, mode);
-        self.registers.a = operand;
-        self.status.set_zero_and_negative(operand);
-        page_crossed
-    }
-
-    fn ldx<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode) -> bool {
-        let (operand, page_crossed) = self.read_operand(bus, mode);
-        self.registers.x = operand;
-        self.status.set_zero_and_negative(operand);
-        page_crossed
-    }
-
-    fn ldy<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode) -> bool {
-        let (operand, page_crossed) = self.read_operand(bus, mode);
-        self.registers.y = operand;
+        f(&mut self.registers, operand);
         self.status.set_zero_and_negative(operand);
         page_crossed
     }
