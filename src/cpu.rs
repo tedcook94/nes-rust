@@ -54,6 +54,28 @@ impl Cpu {
                 self.status.set(Status::OVERFLOW, false);
                 2
             }
+            // Decrement
+            0xCA => {
+                self.registers.x = self.registers.x.wrapping_sub(1);
+                self.status.set_zero_and_negative(self.registers.x);
+                2
+            }
+            0x88 => {
+                self.registers.y = self.registers.y.wrapping_sub(1);
+                self.status.set_zero_and_negative(self.registers.y);
+                2
+            }
+            // Increment
+            0xE8 => {
+                self.registers.x = self.registers.x.wrapping_add(1);
+                self.status.set_zero_and_negative(self.registers.x);
+                2
+            }
+            0xC8 => {
+                self.registers.y = self.registers.y.wrapping_add(1);
+                self.status.set_zero_and_negative(self.registers.y);
+                2
+            }
             // LDA
             0xA9 => {
                 let _ = self.lda(bus, Immediate);
