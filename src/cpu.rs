@@ -400,6 +400,29 @@ impl Cpu {
                 let page_crossed = self.logical(bus, IndirectY, ops::ora);
                 if page_crossed { 6 } else { 5 }
             }
+            // PHA
+            0x48 => {
+                self.push(bus, self.registers.a);
+                3
+            }
+            // PHP
+            0x08 => {
+                self.push(bus, self.status.0 | Status::BREAK_COMMAND | Status::UNUSED);
+                3
+            }
+            // PLA
+            0x68 => {
+                self.registers.a = self.pull(bus);
+                self.status.set_zero_and_negative(self.registers.a);
+                4
+            }
+            // PLP
+            0x28 => {
+                let pulled = self.pull(bus);
+                self.status.0 =
+                    (pulled & !(Status::BREAK_COMMAND | Status::UNUSED)) | Status::UNUSED;
+                4
+            }
             // ROL
             0x2A => {
                 self.shift(bus, Accumulator, ops::rol);
@@ -698,6 +721,16 @@ impl Cpu {
         };
         self.status.set(Status::CARRY, carry);
         self.status.set_zero_and_negative(value);
+    }
+
+    fn push<T: Bus>(&mut self, bus: &mut T, value: u8) {
+        bus.write(0x0100 + u16::from(self.registers.sp), value);
+        self.registers.sp = self.registers.sp.wrapping_sub(1);
+    }
+
+    fn pull<T: Bus>(&mut self, bus: &mut T) -> u8 {
+        self.registers.sp = self.registers.sp.wrapping_add(1);
+        bus.read(0x0100 + u16::from(self.registers.sp))
     }
 }
 

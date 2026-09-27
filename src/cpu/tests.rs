@@ -3681,3 +3681,167 @@ fn ror_absolute_x_with_page_crossed_has_no_extra_cycle() {
     assert_eq!(cycles, 7);
     assert_eq!(cpu.cycle_count, 7);
 }
+
+// Stack
+
+#[test]
+fn pha_pushes_a() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x48]);
+    cpu.registers.a = 0x42;
+    cpu.status = Status(0xC3);
+    bus.0[0x01FC] = 0xEE; // decoy: address if SP is decremented before writing
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FD], 0x42, "$01FD = {:#04X}", bus.0[0x01FD]);
+    assert_eq!(bus.0[0x01FC], 0xEE);
+    assert_eq!(cpu.registers.sp, 0xFC);
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.status.0, 0xC3);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn pha_wraps_stack_pointer() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x48]);
+    cpu.registers.a = 0x42;
+    cpu.registers.sp = 0x00;
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x0100], 0x42);
+    assert_eq!(cpu.registers.sp, 0xFF);
+}
+
+#[test]
+fn pla_pulls_into_a() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x68]);
+    cpu.registers.a = 0xEE;
+    cpu.registers.sp = 0xFC;
+    cpu.status = Status(0xFF);
+    bus.0[0x01FD] = 0x42;
+    bus.0[0x01FC] = 0x11; // decoy: address if SP is incremented after reading
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    assert_eq!(cpu.status.0, 0xFF & !(Status::ZERO | Status::NEGATIVE));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn pla_sets_zero_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x68]);
+    cpu.registers.a = 0xEE;
+    cpu.registers.sp = 0xFC;
+    cpu.status = Status(0x00);
+    bus.0[0x01FD] = 0x00;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00);
+    assert_eq!(cpu.status.0, Status::ZERO);
+}
+
+#[test]
+fn pla_sets_negative_flag() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x68]);
+    cpu.registers.sp = 0xFC;
+    cpu.status = Status(0x00);
+    bus.0[0x01FD] = 0x80;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x80);
+    assert_eq!(cpu.status.0, Status::NEGATIVE);
+}
+
+#[test]
+fn pla_wraps_stack_pointer() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x68]);
+    cpu.registers.sp = 0xFF;
+    bus.0[0x0100] = 0x42;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.sp, 0x00);
+}
+
+#[test]
+fn pha_then_pla_round_trips() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x48, 0xA9, 0x00, 0x68]);
+    cpu.registers.a = 0x42;
+
+    cpu.step(&mut bus); // PHA
+    cpu.step(&mut bus); // LDA #$00
+    cpu.step(&mut bus); // PLA
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.sp, 0xFD);
+}
+
+#[test]
+fn php_pushes_status_with_break_and_unused_set() {
+    // $C3 = N V - - - - Z C; pushed copy gains B (bit 4) and bit 5 → $F3
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x08]);
+    cpu.status = Status(0xC3);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FD], 0xF3, "$01FD = {:#010b}", bus.0[0x01FD]);
+    assert_eq!(cpu.registers.sp, 0xFC);
+    assert_eq!(cpu.status.0, 0xC3); // live P is unchanged
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn plp_pulls_status() {
+    // $C3 has neither bit 4 nor 5; P keeps bit 5 set → $E3
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x28]);
+    cpu.registers.sp = 0xFC;
+    cpu.status = Status(Status::UNUSED);
+    bus.0[0x01FD] = 0xC3;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0xE3, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn plp_ignores_break_bit_when_set() {
+    // $FF would set B; P ends with B clear and bit 5 set → $EF
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x28]);
+    cpu.registers.sp = 0xFC;
+    cpu.status = Status(Status::UNUSED);
+    bus.0[0x01FD] = 0xFF;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0xEF, "P = {:#010b}", cpu.status.0);
+}
+
+#[test]
+fn plp_keeps_unused_bit_when_clear() {
+    // $00 would clear bit 5; P keeps it set → $20
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x28]);
+    cpu.registers.sp = 0xFC;
+    cpu.status = Status(0xFF);
+    bus.0[0x01FD] = 0x00;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0x20, "P = {:#010b}", cpu.status.0);
+}
+
+#[test]
+fn php_then_plp_round_trips() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x08, 0x28]);
+    cpu.status = Status(0xE3);
+
+    cpu.step(&mut bus); // PHP
+    cpu.status = Status(Status::UNUSED);
+    cpu.step(&mut bus); // PLP
+    assert_eq!(cpu.status.0, 0xE3);
+    assert_eq!(cpu.registers.sp, 0xFD);
+}
