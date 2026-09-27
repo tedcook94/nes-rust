@@ -3009,3 +3009,675 @@ fn cpy_absolute_compares_memory() {
     assert_eq!(cycles, 4);
     assert_eq!(cpu.cycle_count, 4);
 }
+
+// ASL
+
+#[test]
+fn asl_accumulator_shifts_bit_7_into_carry() {
+    // 1000_0001 << 1 → 0000_0010, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x0A]);
+    cpu.registers.a = 0x81;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x02, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::CARRY, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn asl_accumulator_clears_carry() {
+    // 0100_0001 << 1 → 1000_0010, C = 0; old C is ignored
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x0A]);
+    cpu.registers.a = 0x41;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x82, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::NEGATIVE, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn asl_accumulator_sets_zero_flag() {
+    // 1000_0000 << 1 → 0000_0000, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x0A]);
+    cpu.registers.a = 0x80;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn asl_zero_page_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x06, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    bus.0[0x10] = 0x41;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x82, "0x10 = {:#010b}", bus.0[0x10]);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn asl_zero_page_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x16, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x41;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x82, "0x14 = {:#010b}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn asl_zero_page_x_with_wraparound_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x16, 0xFF]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x02;
+    bus.0[0x01] = 0x41;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x82, "0x01 = {:#010b}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn asl_absolute_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x0E, 0x34, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    bus.0[0x1234] = 0x41;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x82, "0x1234 = {:#010b}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn asl_absolute_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x1E, 0x00, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x41;
+    bus.0[0x1200] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1204], 0x82, "0x1204 = {:#010b}", bus.0[0x1204]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn asl_absolute_x_with_page_crossed_has_no_extra_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x1E, 0xFF, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x41;
+    bus.0[0x1200] = 0xEE; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1300], 0x82, "0x1300 = {:#010b}", bus.0[0x1300]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+// LSR
+
+#[test]
+fn lsr_accumulator_shifts_bit_0_into_carry() {
+    // 1000_0001 >> 1 → 0100_0000, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x4A]);
+    cpu.registers.a = 0x81;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::CARRY, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn lsr_accumulator_clears_carry() {
+    // 1000_0010 >> 1 → 0100_0001, C = 0; old C is ignored
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x4A]);
+    cpu.registers.a = 0x82;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x41, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, 0, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn lsr_accumulator_sets_zero_flag() {
+    // 0000_0001 >> 1 → 0000_0000, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x4A]);
+    cpu.registers.a = 0x01;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn lsr_zero_page_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x46, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    bus.0[0x10] = 0x82;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x41, "0x10 = {:#010b}", bus.0[0x10]);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn lsr_zero_page_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x56, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x82;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x41, "0x14 = {:#010b}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn lsr_zero_page_x_with_wraparound_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x56, 0xFF]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x02;
+    bus.0[0x01] = 0x82;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x41, "0x01 = {:#010b}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn lsr_absolute_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x4E, 0x34, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    bus.0[0x1234] = 0x82;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x41, "0x1234 = {:#010b}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn lsr_absolute_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x5E, 0x00, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x82;
+    bus.0[0x1200] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1204], 0x41, "0x1204 = {:#010b}", bus.0[0x1204]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn lsr_absolute_x_with_page_crossed_has_no_extra_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x5E, 0xFF, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(0);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x82;
+    bus.0[0x1200] = 0xEE; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1300], 0x41, "0x1300 = {:#010b}", bus.0[0x1300]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+// ROL
+
+#[test]
+fn rol_accumulator_shifts_bit_7_into_carry() {
+    // 1000_0001 rol, C=0 → 0000_0010, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x2A]);
+    cpu.registers.a = 0x81;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x02, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::CARRY, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn rol_accumulator_rotates_carry_into_bit_0() {
+    // 0100_0001 rol, C=1 → 1000_0011, C = 0
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x2A]);
+    cpu.registers.a = 0x41;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x83, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::NEGATIVE, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn rol_accumulator_sets_zero_flag() {
+    // 1000_0000 rol, C=0 → 0000_0000, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x2A]);
+    cpu.registers.a = 0x80;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn rol_zero_page_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x26, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x10] = 0x41;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0x83, "0x10 = {:#010b}", bus.0[0x10]);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn rol_zero_page_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x36, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x41;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0x83, "0x14 = {:#010b}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn rol_zero_page_x_with_wraparound_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x36, 0xFF]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x02;
+    bus.0[0x01] = 0x41;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0x83, "0x01 = {:#010b}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn rol_absolute_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x2E, 0x34, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x1234] = 0x41;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0x83, "0x1234 = {:#010b}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn rol_absolute_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x3E, 0x00, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x41;
+    bus.0[0x1200] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1204], 0x83, "0x1204 = {:#010b}", bus.0[0x1204]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn rol_absolute_x_with_page_crossed_has_no_extra_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x3E, 0xFF, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x41;
+    bus.0[0x1200] = 0xEE; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1300], 0x83, "0x1300 = {:#010b}", bus.0[0x1300]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+// ROR
+
+#[test]
+fn ror_accumulator_shifts_bit_0_into_carry() {
+    // 1000_0001 ror, C=0 → 0100_0000, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6A]);
+    cpu.registers.a = 0x81;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::CARRY, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn ror_accumulator_rotates_carry_into_bit_7() {
+    // 1000_0010 ror, C=1 → 1100_0001, C = 0
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6A]);
+    cpu.registers.a = 0x82;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0xC1, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(cpu.status.0, Status::NEGATIVE, "P = {:#010b}", cpu.status.0);
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn ror_accumulator_sets_zero_flag() {
+    // 0000_0001 ror, C=0 → 0000_0000, C = 1
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6A]);
+    cpu.registers.a = 0x01;
+    cpu.status = Status(0);
+    bus.0[0x00] = 0xEE; // decoy: accumulator mode must not touch memory
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#010b}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert_eq!(bus.0[0x00], 0xEE);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn ror_zero_page_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x66, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x10] = 0x82;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x10], 0xC1, "0x10 = {:#010b}", bus.0[0x10]);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn ror_zero_page_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x76, 0x10]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x82;
+    bus.0[0x10] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x14], 0xC1, "0x14 = {:#010b}", bus.0[0x14]);
+    assert_eq!(bus.0[0x10], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn ror_zero_page_x_with_wraparound_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x76, 0xFF]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x02;
+    bus.0[0x01] = 0x82;
+    bus.0[0x0101] = 0xEE; // decoy: address if added as u16
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01], 0xC1, "0x01 = {:#010b}", bus.0[0x01]);
+    assert_eq!(bus.0[0x0101], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn ror_absolute_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6E, 0x34, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x1234] = 0x82;
+    bus.0[0x3412] = 0xEE; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1234], 0xC1, "0x1234 = {:#010b}", bus.0[0x1234]);
+    assert_eq!(bus.0[0x3412], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn ror_absolute_x_modifies_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x7E, 0x00, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x82;
+    bus.0[0x1200] = 0xEE; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1204], 0xC1, "0x1204 = {:#010b}", bus.0[0x1204]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn ror_absolute_x_with_page_crossed_has_no_extra_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x7E, 0xFF, 0x12]);
+    cpu.registers.a = 0x11; // decoy: memory mode must not touch A
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x82;
+    bus.0[0x1200] = 0xEE; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(bus.0[0x1300], 0xC1, "0x1300 = {:#010b}", bus.0[0x1300]);
+    assert_eq!(bus.0[0x1200], 0xEE);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert!(!cpu.status.is_set(Status::CARRY));
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}

@@ -17,6 +17,7 @@ enum AddressingMode {
     AbsoluteY,
     IndirectX,
     IndirectY,
+    Accumulator,
 }
 
 impl Cpu {
@@ -69,6 +70,27 @@ impl Cpu {
             0x31 => {
                 let page_crossed = self.logical(bus, IndirectY, |a, m| a & m);
                 if page_crossed { 6 } else { 5 }
+            }
+            // ASL
+            0x0A => {
+                self.shift(bus, Accumulator, |v, _| (v << 1, v & 0x80 != 0));
+                2
+            }
+            0x06 => {
+                self.shift(bus, ZeroPage, |v, _| (v << 1, v & 0x80 != 0));
+                5
+            }
+            0x16 => {
+                self.shift(bus, ZeroPageX, |v, _| (v << 1, v & 0x80 != 0));
+                6
+            }
+            0x0E => {
+                self.shift(bus, Absolute, |v, _| (v << 1, v & 0x80 != 0));
+                6
+            }
+            0x1E => {
+                self.shift(bus, AbsoluteX, |v, _| (v << 1, v & 0x80 != 0));
+                7
             }
             // BIT
             0x24 => {
@@ -324,6 +346,27 @@ impl Cpu {
                 let page_crossed = self.load(bus, AbsoluteX, |r, v| r.y = v);
                 if page_crossed { 5 } else { 4 }
             }
+            // LSR
+            0x4A => {
+                self.shift(bus, Accumulator, |v, _| (v >> 1, v & 0x01 != 0));
+                2
+            }
+            0x46 => {
+                self.shift(bus, ZeroPage, |v, _| (v >> 1, v & 0x01 != 0));
+                5
+            }
+            0x56 => {
+                self.shift(bus, ZeroPageX, |v, _| (v >> 1, v & 0x01 != 0));
+                6
+            }
+            0x4E => {
+                self.shift(bus, Absolute, |v, _| (v >> 1, v & 0x01 != 0));
+                6
+            }
+            0x5E => {
+                self.shift(bus, AbsoluteX, |v, _| (v >> 1, v & 0x01 != 0));
+                7
+            }
             // ORA
             0x09 => {
                 self.logical(bus, Immediate, |a, m| a | m);
@@ -356,6 +399,68 @@ impl Cpu {
             0x11 => {
                 let page_crossed = self.logical(bus, IndirectY, |a, m| a | m);
                 if page_crossed { 6 } else { 5 }
+            }
+            // ROL
+            0x2A => {
+                self.shift(bus, Accumulator, |v, c| {
+                    ((v << 1) | u8::from(c), v & 0x80 != 0)
+                });
+                2
+            }
+            0x26 => {
+                self.shift(bus, ZeroPage, |v, c| {
+                    ((v << 1) | u8::from(c), v & 0x80 != 0)
+                });
+                5
+            }
+            0x36 => {
+                self.shift(bus, ZeroPageX, |v, c| {
+                    ((v << 1) | u8::from(c), v & 0x80 != 0)
+                });
+                6
+            }
+            0x2E => {
+                self.shift(bus, Absolute, |v, c| {
+                    ((v << 1) | u8::from(c), v & 0x80 != 0)
+                });
+                6
+            }
+            0x3E => {
+                self.shift(bus, AbsoluteX, |v, c| {
+                    ((v << 1) | u8::from(c), v & 0x80 != 0)
+                });
+                7
+            }
+            // ROR
+            0x6A => {
+                self.shift(bus, Accumulator, |v, c| {
+                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
+                });
+                2
+            }
+            0x66 => {
+                self.shift(bus, ZeroPage, |v, c| {
+                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
+                });
+                5
+            }
+            0x76 => {
+                self.shift(bus, ZeroPageX, |v, c| {
+                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
+                });
+                6
+            }
+            0x6E => {
+                self.shift(bus, Absolute, |v, c| {
+                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
+                });
+                6
+            }
+            0x7E => {
+                self.shift(bus, AbsoluteX, |v, c| {
+                    ((v >> 1) | (u8::from(c) << 7), v & 0x01 != 0)
+                });
+                7
             }
             // SEC
             0x38 => {
@@ -528,6 +633,9 @@ impl Cpu {
                     pointer & 0xFF00 != indexed_pointer & 0xFF00,
                 )
             }
+            Accumulator => {
+                panic!("accumulator not supported by get_address_by_mode")
+            }
         }
     }
 
@@ -586,6 +694,30 @@ impl Cpu {
         self.status
             .set_zero_and_negative(register.wrapping_sub(operand));
         page_crossed
+    }
+
+    fn shift<T: Bus>(
+        &mut self,
+        bus: &mut T,
+        mode: AddressingMode,
+        f: impl FnOnce(u8, bool) -> (u8, bool),
+    ) {
+        let old_carry = self.status.is_set(Status::CARRY);
+        let (value, carry) = match mode {
+            Accumulator => {
+                let (value, carry) = f(self.registers.a, old_carry);
+                self.registers.a = value;
+                (value, carry)
+            }
+            _ => {
+                let (address, _) = self.get_address_by_mode(bus, mode);
+                let (value, carry) = f(bus.read(address), old_carry);
+                bus.write(address, value);
+                (value, carry)
+            }
+        };
+        self.status.set(Status::CARRY, carry);
+        self.status.set_zero_and_negative(value);
     }
 }
 
