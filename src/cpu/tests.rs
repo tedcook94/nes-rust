@@ -5475,3 +5475,68 @@ fn brk_then_rti_returns_after_padding_byte() {
     cpu.step(&mut bus); // LDA #$42
     assert_eq!(cpu.registers.a, 0x42);
 }
+
+// Reset
+
+fn create_reset_test() -> (Cpu, TestBus) {
+    let (cpu, mut bus) = create_test_cpu_and_bus(&[]);
+    bus.0[0xFFFC] = 0x34; // reset vector → $1234
+    bus.0[0xFFFD] = 0x12;
+    bus.0[0xFFFA] = 0x78; // decoy: NMI vector
+    bus.0[0xFFFB] = 0x56;
+    bus.0[0xFFFE] = 0xBC; // decoy: IRQ/BRK vector
+    bus.0[0xFFFF] = 0x9A;
+    (cpu, bus)
+}
+
+#[test]
+fn reset_loads_pc_from_reset_vector() {
+    let (mut cpu, mut bus) = create_reset_test();
+
+    cpu.reset(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+}
+
+#[test]
+fn reset_sets_power_on_state() {
+    let (mut cpu, mut bus) = create_reset_test();
+    cpu.registers.sp = 0x42;
+    cpu.status = Status(0xC3);
+
+    cpu.reset(&mut bus);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    assert_eq!(cpu.status.0, 0x24, "P = {:#010b}", cpu.status.0);
+}
+
+#[test]
+fn reset_takes_seven_cycles() {
+    // nestest's first log line starts at CYC:7.
+    let (mut cpu, mut bus) = create_reset_test();
+
+    cpu.reset(&mut bus);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn reset_does_not_write_memory() {
+    // Real hardware suppresses the three stack writes during reset.
+    let (mut cpu, mut bus) = create_reset_test();
+    bus.0[0x01FB..=0x01FF].fill(0xEE);
+
+    cpu.reset(&mut bus);
+    assert!(bus.0[0x01FB..=0x01FF].iter().all(|&b| b == 0xEE));
+}
+
+#[test]
+fn reset_then_step_runs_code_at_vector() {
+    let (mut cpu, mut bus) = create_reset_test();
+    bus.0[0x1234] = 0xA9; // LDA #$42
+    bus.0[0x1235] = 0x42;
+
+    cpu.reset(&mut bus);
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.pc, 0x1236);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 9);
+}

@@ -36,6 +36,13 @@ impl Cpu {
         }
     }
 
+    fn reset<T: Bus>(&mut self, bus: &mut T) {
+        self.registers.sp = 0xFD;
+        self.status.0 = 0x24;
+        self.registers.pc = self.read_word(bus, 0xFFFC);
+        self.cycle_count += 7;
+    }
+
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
         let opcode = self.fetch_byte(bus);
         let cycles = match opcode {
