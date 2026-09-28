@@ -3845,3 +3845,135 @@ fn php_then_plp_round_trips() {
     assert_eq!(cpu.status.0, 0xE3);
     assert_eq!(cpu.registers.sp, 0xFD);
 }
+
+// JMP
+
+#[test]
+fn jmp_absolute_sets_pc() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x4C, 0x34, 0x12]);
+    cpu.status = Status(0xC3);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.registers.sp, 0xFD); // JMP doesn't touch the stack
+    assert_eq!(cpu.status.0, 0xC3);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn jmp_absolute_does_not_read_target() {
+    // Absolute JMP uses the operand as the target; it must not dereference it.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x4C, 0x34, 0x12]);
+    bus.0[0x1234] = 0x78; // decoy: pointer bytes if JMP were indirect
+    bus.0[0x1235] = 0x56;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+}
+
+#[test]
+fn jmp_indirect_sets_pc_from_pointer() {
+    // $0120 → pointer bytes 34 12 → $1234
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6C, 0x20, 0x01]);
+    bus.0[0x0120] = 0x34;
+    bus.0[0x0121] = 0x12;
+    bus.0[0x0020] = 0x78; // decoy: pointer if only the low operand byte is used
+    bus.0[0x0021] = 0x56;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn jmp_indirect_page_wrap_bug() {
+    // Pointer at $02FF: low byte from $02FF, high byte from $0200 (not $0300).
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6C, 0xFF, 0x02]);
+    bus.0[0x02FF] = 0x34;
+    bus.0[0x0200] = 0x12;
+    bus.0[0x0300] = 0x56; // decoy: high byte if the page carries
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+}
+
+// JSR / RTS
+
+#[test]
+fn jsr_pushes_return_address_minus_one() {
+    // JSR at $8000 is 3 bytes; the pushed address is $8002 (last byte of JSR).
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x20, 0x34, 0x12]);
+    cpu.status = Status(0xC3);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(bus.0[0x01FD], 0x80, "high byte pushed first");
+    assert_eq!(bus.0[0x01FC], 0x02, "low byte pushed second");
+    assert_eq!(cpu.registers.sp, 0xFB);
+    assert_eq!(cpu.status.0, 0xC3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn rts_pulls_return_address_plus_one() {
+    // Stack holds $8002 (low at $01FC, high at $01FD); RTS resumes at $8003.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x60]);
+    cpu.registers.sp = 0xFB;
+    cpu.status = Status(0xC3);
+    bus.0[0x01FC] = 0x02;
+    bus.0[0x01FD] = 0x80;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8003, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    assert_eq!(cpu.status.0, 0xC3);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn rts_pulls_low_byte_first() {
+    // Distinct bytes catch swapped pull order: $1234 + 1, not $3412 + 1.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x60]);
+    cpu.registers.sp = 0xFB;
+    bus.0[0x01FC] = 0x34;
+    bus.0[0x01FD] = 0x12;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1235, "PC = {:#06X}", cpu.registers.pc);
+}
+
+#[test]
+fn rts_wraps_pc() {
+    // Pulled $FFFF + 1 wraps to $0000.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x60]);
+    cpu.registers.sp = 0xFB;
+    bus.0[0x01FC] = 0xFF;
+    bus.0[0x01FD] = 0xFF;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x0000, "PC = {:#06X}", cpu.registers.pc);
+}
+
+#[test]
+fn jsr_then_rts_returns_to_next_instruction() {
+    // $8000: JSR $8010 / $8003: LDX #$42 / $8010: LDA #$11, RTS
+    let mut program = [0xEA; 0x13];
+    program[0x00..0x03].copy_from_slice(&[0x20, 0x10, 0x80]);
+    program[0x03..0x05].copy_from_slice(&[0xA2, 0x42]);
+    program[0x10..0x13].copy_from_slice(&[0xA9, 0x11, 0x60]);
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&program);
+
+    cpu.step(&mut bus); // JSR
+    assert_eq!(cpu.registers.pc, 0x8010);
+    cpu.step(&mut bus); // LDA #$11
+    cpu.step(&mut bus); // RTS
+    assert_eq!(cpu.registers.pc, 0x8003, "PC = {:#06X}", cpu.registers.pc);
+    cpu.step(&mut bus); // LDX #$42
+    assert_eq!(cpu.registers.a, 0x11);
+    assert_eq!(cpu.registers.x, 0x42);
+    assert_eq!(cpu.registers.sp, 0xFD);
+}

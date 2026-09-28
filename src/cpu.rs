@@ -15,6 +15,7 @@ enum AddressingMode {
     Absolute,
     AbsoluteX,
     AbsoluteY,
+    Indirect,
     IndirectX,
     IndirectY,
     Accumulator,
@@ -271,6 +272,24 @@ impl Cpu {
                 self.status.set_zero_and_negative(self.registers.y);
                 2
             }
+            // JMP
+            0x4C => {
+                let (address, _) = self.get_address_by_mode(bus, Absolute);
+                self.registers.pc = address;
+                3
+            }
+            0x6C => {
+                let (address, _) = self.get_address_by_mode(bus, Indirect);
+                self.registers.pc = address;
+                5
+            }
+            // JSR
+            0x20 => {
+                let (address, _) = self.get_address_by_mode(bus, Absolute);
+                self.push_word(bus, self.registers.pc.wrapping_sub(1));
+                self.registers.pc = address;
+                6
+            }
             // LDA
             0xA9 => {
                 self.load(bus, Immediate, ops::lda);
@@ -465,6 +484,11 @@ impl Cpu {
                 self.shift(bus, AbsoluteX, ops::ror);
                 7
             }
+            // RTS
+            0x60 => {
+                self.registers.pc = self.pull_word(bus).wrapping_add(1);
+                6
+            }
             // SEC
             0x38 => {
                 self.status.set(Status::CARRY, true);
@@ -593,6 +617,18 @@ impl Cpu {
         u16::from_le_bytes([self.fetch_byte(bus), self.fetch_byte(bus)])
     }
 
+    fn push_word<T: Bus>(&mut self, bus: &mut T, word: u16) {
+        let [low, high] = word.to_le_bytes();
+        self.push(bus, high);
+        self.push(bus, low);
+    }
+
+    fn pull_word<T: Bus>(&mut self, bus: &mut T) -> u16 {
+        let low = self.pull(bus);
+        let high = self.pull(bus);
+        u16::from_le_bytes([low, high])
+    }
+
     fn get_indexed_address<T: Bus>(&mut self, bus: &mut T, index: u8) -> (u16, bool) {
         let base = self.fetch_word(bus);
         let address = base.wrapping_add(u16::from(index));
@@ -614,6 +650,18 @@ impl Cpu {
             Absolute => (self.fetch_word(bus), false),
             AbsoluteX => self.get_indexed_address(bus, self.registers.x),
             AbsoluteY => self.get_indexed_address(bus, self.registers.y),
+            Indirect => {
+                let pointer = self.fetch_word(bus);
+                let [low, high] = pointer.to_le_bytes();
+                (
+                    u16::from_le_bytes([
+                        bus.read(pointer),
+                        // 6502 bug: high byte never crosses a page
+                        bus.read(u16::from_le_bytes([low.wrapping_add(1), high])),
+                    ]),
+                    false,
+                )
+            }
             IndirectX => {
                 let nn = self.fetch_byte(bus);
                 (
