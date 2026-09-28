@@ -5328,3 +5328,150 @@ fn sbc_indirect_y_with_page_crossed_adds_cycle() {
     assert_eq!(cycles, 6);
     assert_eq!(cpu.cycle_count, 6);
 }
+
+// NOP
+
+#[test]
+fn nop_does_nothing() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xEA]);
+    cpu.registers.a = 0x11;
+    cpu.registers.x = 0x22;
+    cpu.registers.y = 0x33;
+    cpu.status = Status(0xC3);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x11);
+    assert_eq!(cpu.registers.x, 0x22);
+    assert_eq!(cpu.registers.y, 0x33);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    assert_eq!(cpu.status.0, 0xC3);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 1);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+// BRK
+
+#[test]
+fn brk_jumps_to_irq_vector() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x00]);
+    bus.0[0xFFFE] = 0x34;
+    bus.0[0xFFFF] = 0x12;
+    bus.0[0xFFFA] = 0x78; // decoy: NMI vector
+    bus.0[0xFFFB] = 0x56;
+    bus.0[0xFFFC] = 0xBC; // decoy: reset vector
+    bus.0[0xFFFD] = 0x9A;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn brk_pushes_pc_plus_two() {
+    // BRK at $8000 skips a padding byte, so the return address is $8002.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x00]);
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FD], 0x80, "PC high byte pushed first");
+    assert_eq!(bus.0[0x01FC], 0x02, "PC low byte pushed second");
+    assert_eq!(cpu.registers.sp, 0xFA);
+}
+
+#[test]
+fn brk_pushes_status_with_break_and_unused_set() {
+    // $C3 = N V - - - - Z C; pushed copy gains B and bit 5 → $F3
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x00]);
+    cpu.status = Status(0xC3);
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FB], 0xF3, "$01FB = {:#010b}", bus.0[0x01FB]);
+}
+
+#[test]
+fn brk_sets_interrupt_disable() {
+    // Live P gains I; B stays clear because it only exists on the stack.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x00]);
+    cpu.status = Status(0xC3);
+
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.status.0,
+        0xC3 | Status::INTERRUPT_DISABLE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+}
+
+#[test]
+fn brk_pushes_interrupt_disable_as_it_was() {
+    // I is set after pushing, so the pushed copy keeps the old I (clear).
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x00]);
+    cpu.status = Status(Status::UNUSED);
+
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FB] & Status::INTERRUPT_DISABLE, 0);
+}
+
+// RTI
+
+#[test]
+fn rti_pulls_status_and_pc() {
+    // Stack from $01FB: P = $C3, PC low = $34, PC high = $12
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x40]);
+    cpu.registers.sp = 0xFA;
+    cpu.status = Status(Status::UNUSED | Status::INTERRUPT_DISABLE);
+    bus.0[0x01FB] = 0xC3;
+    bus.0[0x01FC] = 0x34;
+    bus.0[0x01FD] = 0x12;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc); // no +1, unlike RTS
+    assert_eq!(cpu.status.0, 0xE3, "P = {:#010b}", cpu.status.0);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn rti_ignores_break_and_unused_bits() {
+    // Pulled $10 (B only) → B ignored, bit 5 kept → $20
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x40]);
+    cpu.registers.sp = 0xFA;
+    bus.0[0x01FB] = 0x10;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.status.0, 0x20, "P = {:#010b}", cpu.status.0);
+}
+
+#[test]
+fn rti_restores_interrupt_disable_from_stack() {
+    // A handler runs with I set; RTI restores the pre-interrupt I (clear).
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x40]);
+    cpu.registers.sp = 0xFA;
+    cpu.status = Status(Status::UNUSED | Status::INTERRUPT_DISABLE);
+    bus.0[0x01FB] = Status::UNUSED;
+
+    cpu.step(&mut bus);
+    assert!(!cpu.status.is_set(Status::INTERRUPT_DISABLE));
+}
+
+#[test]
+fn brk_then_rti_returns_after_padding_byte() {
+    // $8000: BRK, $8001: padding, $8002: LDA #$42. Handler at $9000: RTI.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x00, 0xFF, 0xA9, 0x42]);
+    cpu.status = Status(Status::UNUSED | Status::CARRY);
+    bus.0[0xFFFE] = 0x00;
+    bus.0[0xFFFF] = 0x90;
+    bus.0[0x9000] = 0x40;
+
+    cpu.step(&mut bus); // BRK
+    assert_eq!(cpu.registers.pc, 0x9000);
+    cpu.step(&mut bus); // RTI
+    assert_eq!(cpu.registers.pc, 0x8002, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, Status::UNUSED | Status::CARRY);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    cpu.step(&mut bus); // LDA #$42
+    assert_eq!(cpu.registers.a, 0x42);
+}

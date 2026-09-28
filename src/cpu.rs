@@ -165,6 +165,15 @@ impl Cpu {
                 let additional_cycles = self.branch(bus, !self.status.is_set(Status::NEGATIVE));
                 2 + additional_cycles
             }
+            // BRK
+            0x00 => {
+                self.registers.pc = self.registers.pc.wrapping_add(1);
+                self.push_word(bus, self.registers.pc);
+                self.push(bus, self.status.to_stack_byte());
+                self.status.set(Status::INTERRUPT_DISABLE, true);
+                self.registers.pc = self.read_word(bus, 0xFFFE);
+                7
+            }
             // BVC
             0x50 => {
                 let additional_cycles = self.branch(bus, !self.status.is_set(Status::OVERFLOW));
@@ -459,6 +468,8 @@ impl Cpu {
                 self.shift(bus, AbsoluteX, ops::lsr);
                 7
             }
+            // NOP
+            0xEA => 2,
             // ORA
             0x09 => {
                 self.logical(bus, Immediate, ops::ora);
@@ -499,7 +510,7 @@ impl Cpu {
             }
             // PHP
             0x08 => {
-                self.push(bus, self.status.0 | Status::BREAK_COMMAND | Status::UNUSED);
+                self.push(bus, self.status.to_stack_byte());
                 3
             }
             // PLA
@@ -511,8 +522,7 @@ impl Cpu {
             // PLP
             0x28 => {
                 let pulled = self.pull(bus);
-                self.status.0 =
-                    (pulled & !(Status::BREAK_COMMAND | Status::UNUSED)) | Status::UNUSED;
+                self.status.load_stack_byte(pulled);
                 4
             }
             // ROL
@@ -556,6 +566,13 @@ impl Cpu {
             0x7E => {
                 self.shift(bus, AbsoluteX, ops::ror);
                 7
+            }
+            // RTI
+            0x40 => {
+                let pulled = self.pull(bus);
+                self.status.load_stack_byte(pulled);
+                self.registers.pc = self.pull_word(bus);
+                6
             }
             // RTS
             0x60 => {
@@ -721,6 +738,10 @@ impl Cpu {
 
     fn fetch_word<T: Bus>(&mut self, bus: &mut T) -> u16 {
         u16::from_le_bytes([self.fetch_byte(bus), self.fetch_byte(bus)])
+    }
+
+    fn read_word<T: Bus>(&mut self, bus: &mut T, address: u16) -> u16 {
+        u16::from_le_bytes([bus.read(address), bus.read(address.wrapping_add(1))])
     }
 
     fn push_word<T: Bus>(&mut self, bus: &mut T, word: u16) {
@@ -952,6 +973,14 @@ impl Status {
     fn set_zero_and_negative(&mut self, value: u8) {
         self.set(Status::ZERO, value == 0x00);
         self.set(Status::NEGATIVE, value & 0x80 != 0); // check bit 7 (sign bit)
+    }
+
+    fn to_stack_byte(&self) -> u8 {
+        self.0 | Status::BREAK_COMMAND | Status::UNUSED
+    }
+
+    fn load_stack_byte(&mut self, byte: u8) {
+        self.0 = (byte & !(Status::BREAK_COMMAND | Status::UNUSED)) | Status::UNUSED;
     }
 }
 
