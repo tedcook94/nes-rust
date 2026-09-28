@@ -3977,3 +3977,501 @@ fn jsr_then_rts_returns_to_next_instruction() {
     assert_eq!(cpu.registers.x, 0x42);
     assert_eq!(cpu.registers.sp, 0xFD);
 }
+
+// Branches
+
+// Places a 2-byte branch at `address` and points PC at it.
+fn create_branch_test(address: u16, opcode: u8, offset: u8) -> (Cpu, TestBus) {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[]);
+    cpu.registers.pc = address;
+    bus.0[address as usize] = opcode;
+    bus.0[address as usize + 1] = offset;
+    (cpu, bus)
+}
+
+// BCC
+
+#[test]
+fn bcc_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x90, 0x10]);
+    cpu.status = Status(Status::CARRY);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bcc_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x90, 0x10]);
+    cpu.status = Status(0xFF & !Status::CARRY);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bcc_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0x90, 0xFE);
+    cpu.status = Status(0xFF & !Status::CARRY);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bcc_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0x90, 0x10);
+    cpu.status = Status(0xFF & !Status::CARRY);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BCS
+
+#[test]
+fn bcs_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xB0, 0x10]);
+    cpu.status = Status(0xFF & !Status::CARRY);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bcs_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xB0, 0x10]);
+    cpu.status = Status(Status::CARRY);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bcs_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0xB0, 0xFE);
+    cpu.status = Status(Status::CARRY);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bcs_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0xB0, 0x10);
+    cpu.status = Status(Status::CARRY);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BNE
+
+#[test]
+fn bne_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD0, 0x10]);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bne_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xD0, 0x10]);
+    cpu.status = Status(0xFF & !Status::ZERO);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bne_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0xD0, 0xFE);
+    cpu.status = Status(0xFF & !Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bne_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0xD0, 0x10);
+    cpu.status = Status(0xFF & !Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BEQ
+
+#[test]
+fn beq_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF0, 0x10]);
+    cpu.status = Status(0xFF & !Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn beq_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF0, 0x10]);
+    cpu.status = Status(Status::ZERO);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn beq_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0xF0, 0xFE);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn beq_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0xF0, 0x10);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BPL
+
+#[test]
+fn bpl_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x10, 0x10]);
+    cpu.status = Status(Status::NEGATIVE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bpl_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x10, 0x10]);
+    cpu.status = Status(0xFF & !Status::NEGATIVE);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bpl_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0x10, 0xFE);
+    cpu.status = Status(0xFF & !Status::NEGATIVE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bpl_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0x10, 0x10);
+    cpu.status = Status(0xFF & !Status::NEGATIVE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BMI
+
+#[test]
+fn bmi_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x30, 0x10]);
+    cpu.status = Status(0xFF & !Status::NEGATIVE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bmi_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x30, 0x10]);
+    cpu.status = Status(Status::NEGATIVE);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bmi_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0x30, 0xFE);
+    cpu.status = Status(Status::NEGATIVE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bmi_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0x30, 0x10);
+    cpu.status = Status(Status::NEGATIVE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BVC
+
+#[test]
+fn bvc_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x50, 0x10]);
+    cpu.status = Status(Status::OVERFLOW);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bvc_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x50, 0x10]);
+    cpu.status = Status(0xFF & !Status::OVERFLOW);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bvc_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0x50, 0xFE);
+    cpu.status = Status(0xFF & !Status::OVERFLOW);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bvc_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0x50, 0x10);
+    cpu.status = Status(0xFF & !Status::OVERFLOW);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// BVS
+
+#[test]
+fn bvs_not_taken_continues() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x70, 0x10]);
+    cpu.status = Status(0xFF & !Status::OVERFLOW);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers.pc,
+        STARTING_ADDRESS + 2,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn bvs_taken_forward() {
+    // $8002 + $10 = $8012
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x70, 0x10]);
+    cpu.status = Status(Status::OVERFLOW);
+    let status = cpu.status.0;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8012, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cpu.status.0, status);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn bvs_taken_backward() {
+    // $8012 + $FE (-2) = $8010: branches back to itself
+    let (mut cpu, mut bus) = create_branch_test(0x8010, 0x70, 0xFE);
+    cpu.status = Status(Status::OVERFLOW);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8010, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn bvs_taken_across_page_adds_cycle() {
+    // $80F2 + $10 = $8102: next instruction on page $80, target on page $81
+    let (mut cpu, mut bus) = create_branch_test(0x80F0, 0x70, 0x10);
+    cpu.status = Status(Status::OVERFLOW);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+// Page cross is measured from the next instruction, not the branch itself.
+
+#[test]
+fn branch_page_cross_uses_address_after_branch() {
+    // BEQ at $80FE: next instruction is $8100. $8100 + $02 = $8102 stays on
+    // page $81, so no extra cycle even though the branch opcode is on page $80.
+    let (mut cpu, mut bus) = create_branch_test(0x80FE, 0xF0, 0x02);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8102, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}
+
+#[test]
+fn branch_backward_across_page_adds_cycle() {
+    // $8102 + $FA (-6) = $80FC
+    let (mut cpu, mut bus) = create_branch_test(0x8100, 0xF0, 0xFA);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x80FC, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+}
+
+#[test]
+fn branch_offset_is_signed() {
+    // $80 is -128, not +128: $8002 - 128 = $7F82
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF0, 0x80]);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x7F82, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 4);
+}
+
+#[test]
+fn branch_largest_forward_offset() {
+    // $7F is +127: $8002 + 127 = $8081
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF0, 0x7F]);
+    cpu.status = Status(Status::ZERO);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x8081, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 3);
+}

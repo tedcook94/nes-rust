@@ -93,6 +93,21 @@ impl Cpu {
                 self.shift(bus, AbsoluteX, ops::asl);
                 7
             }
+            // BCC
+            0x90 => {
+                let additional_cycles = self.branch(bus, !self.status.is_set(Status::CARRY));
+                2 + additional_cycles
+            }
+            // BCS
+            0xB0 => {
+                let additional_cycles = self.branch(bus, self.status.is_set(Status::CARRY));
+                2 + additional_cycles
+            }
+            // BEQ
+            0xF0 => {
+                let additional_cycles = self.branch(bus, self.status.is_set(Status::ZERO));
+                2 + additional_cycles
+            }
             // BIT
             0x24 => {
                 self.bit(bus, ZeroPage);
@@ -101,6 +116,31 @@ impl Cpu {
             0x2C => {
                 self.bit(bus, Absolute);
                 4
+            }
+            // BMI
+            0x30 => {
+                let additional_cycles = self.branch(bus, self.status.is_set(Status::NEGATIVE));
+                2 + additional_cycles
+            }
+            // BNE
+            0xD0 => {
+                let additional_cycles = self.branch(bus, !self.status.is_set(Status::ZERO));
+                2 + additional_cycles
+            }
+            // BPL
+            0x10 => {
+                let additional_cycles = self.branch(bus, !self.status.is_set(Status::NEGATIVE));
+                2 + additional_cycles
+            }
+            // BVC
+            0x50 => {
+                let additional_cycles = self.branch(bus, !self.status.is_set(Status::OVERFLOW));
+                2 + additional_cycles
+            }
+            // BVS
+            0x70 => {
+                let additional_cycles = self.branch(bus, self.status.is_set(Status::OVERFLOW));
+                2 + additional_cycles
             }
             // CLC
             0x18 => {
@@ -779,6 +819,18 @@ impl Cpu {
     fn pull<T: Bus>(&mut self, bus: &mut T) -> u8 {
         self.registers.sp = self.registers.sp.wrapping_add(1);
         bus.read(0x0100 + u16::from(self.registers.sp))
+    }
+
+    fn branch<T: Bus>(&mut self, bus: &mut T, condition: bool) -> u8 {
+        let offset = self.fetch_byte(bus) as i8;
+        if !condition {
+            return 0;
+        }
+
+        let offset_address = self.registers.pc.wrapping_add_signed(i16::from(offset));
+        let page_crossed = self.registers.pc & 0xFF00 != offset_address & 0xFF00;
+        self.registers.pc = offset_address;
+        if page_crossed { 2 } else { 1 }
     }
 }
 
