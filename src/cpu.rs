@@ -39,6 +39,39 @@ impl Cpu {
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
         let opcode = self.fetch_byte(bus);
         let cycles = match opcode {
+            // ADC
+            0x69 => {
+                self.add(bus, Immediate, false);
+                2
+            }
+            0x65 => {
+                self.add(bus, ZeroPage, false);
+                3
+            }
+            0x75 => {
+                self.add(bus, ZeroPageX, false);
+                4
+            }
+            0x6D => {
+                self.add(bus, Absolute, false);
+                4
+            }
+            0x7D => {
+                let page_crossed = self.add(bus, AbsoluteX, false);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x79 => {
+                let page_crossed = self.add(bus, AbsoluteY, false);
+                if page_crossed { 5 } else { 4 }
+            }
+            0x61 => {
+                self.add(bus, IndirectX, false);
+                6
+            }
+            0x71 => {
+                let page_crossed = self.add(bus, IndirectY, false);
+                if page_crossed { 6 } else { 5 }
+            }
             // AND
             0x29 => {
                 self.logical(bus, Immediate, ops::and);
@@ -529,6 +562,39 @@ impl Cpu {
                 self.registers.pc = self.pull_word(bus).wrapping_add(1);
                 6
             }
+            // SBC
+            0xE9 => {
+                self.add(bus, Immediate, true);
+                2
+            }
+            0xE5 => {
+                self.add(bus, ZeroPage, true);
+                3
+            }
+            0xF5 => {
+                self.add(bus, ZeroPageX, true);
+                4
+            }
+            0xED => {
+                self.add(bus, Absolute, true);
+                4
+            }
+            0xFD => {
+                let page_crossed = self.add(bus, AbsoluteX, true);
+                if page_crossed { 5 } else { 4 }
+            }
+            0xF9 => {
+                let page_crossed = self.add(bus, AbsoluteY, true);
+                if page_crossed { 5 } else { 4 }
+            }
+            0xE1 => {
+                self.add(bus, IndirectX, true);
+                6
+            }
+            0xF1 => {
+                let page_crossed = self.add(bus, IndirectY, true);
+                if page_crossed { 6 } else { 5 }
+            }
             // SEC
             0x38 => {
                 self.status.set(Status::CARRY, true);
@@ -831,6 +897,27 @@ impl Cpu {
         let page_crossed = self.registers.pc & 0xFF00 != offset_address & 0xFF00;
         self.registers.pc = offset_address;
         if page_crossed { 2 } else { 1 }
+    }
+
+    fn add<T: Bus>(&mut self, bus: &mut T, mode: AddressingMode, invert: bool) -> bool {
+        let (mut operand, page_crossed) = self.read_operand(bus, mode);
+        if invert {
+            operand = !operand;
+        }
+
+        let [result_low, result_high] = (u16::from(self.registers.a)
+            + u16::from(operand)
+            + u16::from(self.status.is_set(Status::CARRY)))
+        .to_le_bytes();
+        self.status.set(Status::CARRY, result_high != 0);
+        self.status.set(
+            Status::OVERFLOW,
+            (!(self.registers.a ^ operand) & (self.registers.a ^ result_low)) & 0x80 != 0, // check bit 7 (sign bit)
+        );
+        self.status.set_zero_and_negative(result_low);
+        self.registers.a = result_low;
+
+        page_crossed
     }
 }
 

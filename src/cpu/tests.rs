@@ -4475,3 +4475,856 @@ fn branch_largest_forward_offset() {
     assert_eq!(cpu.registers.pc, 0x8081, "PC = {:#06X}", cpu.registers.pc);
     assert_eq!(cycles, 3);
 }
+
+// ADC / SBC
+
+// C, Z, V and N are the only flags ADC/SBC may change.
+const CZVN: u8 = Status::CARRY | Status::ZERO | Status::OVERFLOW | Status::NEGATIVE;
+
+// ADC flags
+
+#[test]
+fn adc_adds() {
+    // $10 + $20 = $30
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x20]);
+    cpu.registers.a = 0x10;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x30, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.status.0 & CZVN, 0, "P = {:#010b}", cpu.status.0);
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_adds_carry_in() {
+    // $10 + $20 + C = $31
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x20]);
+    cpu.registers.a = 0x10;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x31, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.status.0 & CZVN, 0, "P = {:#010b}", cpu.status.0);
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_sets_carry_on_unsigned_overflow() {
+    // $FF + $02 = $101 → $01, C
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x02]);
+    cpu.registers.a = 0xFF;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x01, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_sets_zero_and_carry() {
+    // $FF + $01 = $100 → $00, C, Z
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x01]);
+    cpu.registers.a = 0xFF;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::OVERFLOW | Status::NEGATIVE | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_carry_in_causes_carry_out() {
+    // $FF + $00 + C = $100 → $00
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x00]);
+    cpu.registers.a = 0xFF;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_positive_overflow() {
+    // 80 + 80 = 160 > 127: V, N
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x50]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(Status::ZERO | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0xA0, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::OVERFLOW | Status::NEGATIVE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_negative_overflow() {
+    // -48 + -112 = -160 < -128: V, C
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x90]);
+    cpu.registers.a = 0xD0;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status =
+        Status(Status::ZERO | Status::NEGATIVE | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x60, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY | Status::OVERFLOW,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_no_overflow_mixed_signs() {
+    // 80 + -48 = 32: C only
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0xD0]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x20, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_negative_result() {
+    // 80 + -112 = -32: N
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x90]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status =
+        Status(Status::ZERO | Status::OVERFLOW | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0xE0, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::NEGATIVE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_overflow_from_carry_in() {
+    // 127 + 0 + C = 128: V, N
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x00]);
+    cpu.registers.a = 0x7F;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status =
+        Status(Status::ZERO | Status::CARRY | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x80, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::OVERFLOW | Status::NEGATIVE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+// SBC flags
+
+#[test]
+fn sbc_subtracts() {
+    // $50 - $20 = $30, no borrow: C
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x20]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x30, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_borrow_in() {
+    // $50 - $20 - 1 = $2F: C
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x20]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x2F, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_equal_sets_zero_and_carry() {
+    // $42 - $42 = $00: Z, C
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x42]);
+    cpu.registers.a = 0x42;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x00, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY | Status::ZERO,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_borrow_clears_carry() {
+    // $20 - $50 = $D0: borrow (C clear), N
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x50]);
+    cpu.registers.a = 0x20;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0xD0, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::NEGATIVE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_borrow_in_causes_borrow_out() {
+    // $00 - $00 - 1 = $FF: C clear, N
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x00]);
+    cpu.registers.a = 0x00;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status =
+        Status(Status::ZERO | Status::OVERFLOW | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0xFF, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::NEGATIVE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_positive_overflow() {
+    // 80 - -80 = 160 > 127: V, N
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0xB0]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status =
+        Status(Status::ZERO | Status::CARRY | Status::INTERRUPT_DISABLE | Status::DECIMAL_MODE);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0xA0, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::OVERFLOW | Status::NEGATIVE,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_negative_overflow() {
+    // -48 - 112 = -160 < -128: V, C
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x70]);
+    cpu.registers.a = 0xD0;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::NEGATIVE
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x60, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY | Status::OVERFLOW,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn sbc_no_overflow_same_signs() {
+    // 80 - 48 = 32: C only
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x30]);
+    cpu.registers.a = 0x50;
+    // Z/V/N start opposite to the expected result; I and D are decoys.
+    cpu.status = Status(
+        Status::ZERO
+            | Status::OVERFLOW
+            | Status::NEGATIVE
+            | Status::CARRY
+            | Status::INTERRUPT_DISABLE
+            | Status::DECIMAL_MODE,
+    );
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x20, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(
+        cpu.status.0 & CZVN,
+        Status::CARRY,
+        "P = {:#010b}",
+        cpu.status.0
+    );
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert!(cpu.status.is_set(Status::DECIMAL_MODE)); // decimal mode is ignored on the NES
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 2);
+    assert_eq!(cpu.cycle_count, 2);
+}
+
+#[test]
+fn adc_ignores_decimal_mode() {
+    // In BCD, $09 + $01 = $10. The NES has no decimal mode, so the result is $0A.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x69, 0x01]);
+    cpu.registers.a = 0x09;
+    cpu.status = Status(Status::DECIMAL_MODE);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x0A, "A = {:#04X}", cpu.registers.a);
+}
+
+#[test]
+fn sbc_ignores_decimal_mode() {
+    // In BCD, $10 - $01 = $09. Binary gives $0F.
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE9, 0x01]);
+    cpu.registers.a = 0x10;
+    cpu.status = Status(Status::DECIMAL_MODE | Status::CARRY);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x0F, "A = {:#04X}", cpu.registers.a);
+}
+
+// ADC addressing modes (A = $50, M = $10, C = 1 → 0x61)
+
+#[test]
+fn adc_zero_page_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x65, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x10] = 0x10;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn adc_zero_page_x_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x75, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x10;
+    bus.0[0x10] = 0xFF; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn adc_absolute_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x6D, 0x34, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x1234] = 0x10;
+    bus.0[0x3412] = 0xFF; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn adc_absolute_x_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x7D, 0x00, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn adc_absolute_x_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x7D, 0xFF, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn adc_absolute_y_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x79, 0x00, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.y = 0x04;
+    bus.0[0x1204] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: base address without Y
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn adc_absolute_y_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x79, 0xFF, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.y = 0x01;
+    bus.0[0x1300] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn adc_indirect_x_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x61, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    // $10 + X → $14 → pointer $1234
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x34;
+    bus.0[0x15] = 0x12;
+    bus.0[0x1234] = 0x10;
+    bus.0[0x10] = 0x00; // decoy pointer without X → $2000
+    bus.0[0x11] = 0x20;
+    bus.0[0x2000] = 0xFF;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn adc_indirect_y_adds_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x71, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    // $10 → pointer $1234 + Y → $1238
+    cpu.registers.x = 0x02; // should be ignored
+    cpu.registers.y = 0x04;
+    bus.0[0x10] = 0x34;
+    bus.0[0x11] = 0x12;
+    bus.0[0x1238] = 0x10;
+    bus.0[0x1234] = 0xFF; // decoy: pointer without Y
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn adc_indirect_y_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0x71, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    // $10 → pointer $12FF + Y → $1300
+    cpu.registers.y = 0x01;
+    bus.0[0x10] = 0xFF;
+    bus.0[0x11] = 0x12;
+    bus.0[0x1300] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x61, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+// SBC addressing modes (A = $50, M = $10, C = 1 → 0x40)
+
+#[test]
+fn sbc_zero_page_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE5, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x10] = 0x10;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 3);
+    assert_eq!(cpu.cycle_count, 3);
+}
+
+#[test]
+fn sbc_zero_page_x_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF5, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x10;
+    bus.0[0x10] = 0xFF; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn sbc_absolute_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xED, 0x34, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    bus.0[0x1234] = 0x10;
+    bus.0[0x3412] = 0xFF; // decoy: byte-swapped address
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn sbc_absolute_x_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xFD, 0x00, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x04;
+    bus.0[0x1204] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: base address without X
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn sbc_absolute_x_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xFD, 0xFF, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.x = 0x01;
+    bus.0[0x1300] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn sbc_absolute_y_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF9, 0x00, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.y = 0x04;
+    bus.0[0x1204] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: base address without Y
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 4);
+    assert_eq!(cpu.cycle_count, 4);
+}
+
+#[test]
+fn sbc_absolute_y_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF9, 0xFF, 0x12]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    cpu.registers.y = 0x01;
+    bus.0[0x1300] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 3);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn sbc_indirect_x_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xE1, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    // $10 + X → $14 → pointer $1234
+    cpu.registers.x = 0x04;
+    bus.0[0x14] = 0x34;
+    bus.0[0x15] = 0x12;
+    bus.0[0x1234] = 0x10;
+    bus.0[0x10] = 0x00; // decoy pointer without X → $2000
+    bus.0[0x11] = 0x20;
+    bus.0[0x2000] = 0xFF;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
+
+#[test]
+fn sbc_indirect_y_subtracts_memory() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF1, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    // $10 → pointer $1234 + Y → $1238
+    cpu.registers.x = 0x02; // should be ignored
+    cpu.registers.y = 0x04;
+    bus.0[0x10] = 0x34;
+    bus.0[0x11] = 0x12;
+    bus.0[0x1238] = 0x10;
+    bus.0[0x1234] = 0xFF; // decoy: pointer without Y
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.cycle_count, 5);
+}
+
+#[test]
+fn sbc_indirect_y_with_page_crossed_adds_cycle() {
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[0xF1, 0x10]);
+    cpu.registers.a = 0x50;
+    cpu.status = Status(Status::CARRY);
+    // $10 → pointer $12FF + Y → $1300
+    cpu.registers.y = 0x01;
+    bus.0[0x10] = 0xFF;
+    bus.0[0x11] = 0x12;
+    bus.0[0x1300] = 0x10;
+    bus.0[0x1200] = 0xFF; // decoy: address if high byte doesn't carry
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x40, "A = {:#04X}", cpu.registers.a);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+    assert_eq!(cycles, 6);
+    assert_eq!(cpu.cycle_count, 6);
+}
