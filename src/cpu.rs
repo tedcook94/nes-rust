@@ -4,6 +4,7 @@ pub struct Cpu {
     registers: Registers,
     status: Status,
     cycle_count: u64,
+    nmi_pending: bool,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ impl Cpu {
             },
             status: Status(Status::INTERRUPT_DISABLE | Status::UNUSED),
             cycle_count: 0,
+            nmi_pending: false,
         }
     }
 
@@ -43,7 +45,18 @@ impl Cpu {
         self.cycle_count += 7;
     }
 
+    fn trigger_nmi(&mut self) {
+        self.nmi_pending = true;
+    }
+
     fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
+        if self.nmi_pending {
+            self.nmi_pending = false;
+            let cycles = self.interrupt(bus, 0xFFFA, false);
+            self.cycle_count += u64::from(cycles);
+            return cycles;
+        }
+
         let opcode = self.fetch_byte(bus);
         let cycles = match opcode {
             // ADC
@@ -175,11 +188,7 @@ impl Cpu {
             // BRK
             0x00 => {
                 self.registers.pc = self.registers.pc.wrapping_add(1);
-                self.push_word(bus, self.registers.pc);
-                self.push(bus, self.status.to_stack_byte());
-                self.status.set(Status::INTERRUPT_DISABLE, true);
-                self.registers.pc = self.read_word(bus, 0xFFFE);
-                7
+                self.interrupt(bus, 0xFFFE, true)
             }
             // BVC
             0x50 => {
@@ -517,7 +526,7 @@ impl Cpu {
             }
             // PHP
             0x08 => {
-                self.push(bus, self.status.to_stack_byte());
+                self.push(bus, self.status.to_stack_byte(true));
                 3
             }
             // PLA
@@ -947,6 +956,14 @@ impl Cpu {
 
         page_crossed
     }
+
+    fn interrupt<T: Bus>(&mut self, bus: &mut T, vector: u16, brk: bool) -> u8 {
+        self.push_word(bus, self.registers.pc);
+        self.push(bus, self.status.to_stack_byte(brk));
+        self.status.set(Status::INTERRUPT_DISABLE, true);
+        self.registers.pc = self.read_word(bus, vector);
+        7
+    }
 }
 
 pub struct Registers {
@@ -982,8 +999,8 @@ impl Status {
         self.set(Status::NEGATIVE, value & 0x80 != 0); // check bit 7 (sign bit)
     }
 
-    fn to_stack_byte(&self) -> u8 {
-        self.0 | Status::BREAK_COMMAND | Status::UNUSED
+    fn to_stack_byte(&self, brk: bool) -> u8 {
+        self.0 | if brk { Status::BREAK_COMMAND } else { 0 } | Status::UNUSED
     }
 
     fn load_stack_byte(&mut self, byte: u8) {

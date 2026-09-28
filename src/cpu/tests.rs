@@ -5540,3 +5540,126 @@ fn reset_then_step_runs_code_at_vector() {
     assert_eq!(cycles, 2);
     assert_eq!(cpu.cycle_count, 9);
 }
+
+// NMI
+
+fn create_nmi_test(program: &[u8]) -> (Cpu, TestBus) {
+    let (cpu, mut bus) = create_test_cpu_and_bus(program);
+    bus.0[0xFFFA] = 0x34; // NMI vector → $1234
+    bus.0[0xFFFB] = 0x12;
+    bus.0[0xFFFC] = 0x78; // decoy: reset vector
+    bus.0[0xFFFD] = 0x56;
+    bus.0[0xFFFE] = 0xBC; // decoy: IRQ/BRK vector
+    bus.0[0xFFFF] = 0x9A;
+    (cpu, bus)
+}
+
+#[test]
+fn nmi_jumps_to_nmi_vector() {
+    let (mut cpu, mut bus) = create_nmi_test(&[0xA9, 0x42]);
+
+    cpu.trigger_nmi();
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn nmi_does_not_run_the_next_instruction() {
+    let (mut cpu, mut bus) = create_nmi_test(&[0xA9, 0x42]); // LDA #$42
+    cpu.registers.a = 0x11;
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x11);
+}
+
+#[test]
+fn nmi_pushes_current_pc() {
+    // No opcode was fetched, so the pushed address is PC itself (no +1 or +2).
+    let (mut cpu, mut bus) = create_nmi_test(&[0xEA]);
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FD], 0x80, "PC high byte pushed first");
+    assert_eq!(bus.0[0x01FC], 0x00, "PC low byte pushed second");
+    assert_eq!(cpu.registers.sp, 0xFA);
+}
+
+#[test]
+fn nmi_pushes_status_with_break_clear() {
+    // $C3 = N V - - - - Z C; pushed copy gains bit 5 only → $E3 (B clear, unlike BRK)
+    let (mut cpu, mut bus) = create_nmi_test(&[0xEA]);
+    cpu.status = Status(0xC3);
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FB], 0xE3, "$01FB = {:#010b}", bus.0[0x01FB]);
+}
+
+#[test]
+fn nmi_sets_interrupt_disable_after_pushing() {
+    let (mut cpu, mut bus) = create_nmi_test(&[0xEA]);
+    cpu.status = Status(Status::UNUSED);
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus);
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+    assert_eq!(bus.0[0x01FB] & Status::INTERRUPT_DISABLE, 0); // pushed copy keeps old I
+}
+
+#[test]
+fn nmi_fires_even_when_interrupts_are_disabled() {
+    // NMI is non-maskable: the I flag doesn't block it.
+    let (mut cpu, mut bus) = create_nmi_test(&[0xEA]);
+    cpu.status = Status(Status::UNUSED | Status::INTERRUPT_DISABLE);
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234, "PC = {:#06X}", cpu.registers.pc);
+}
+
+#[test]
+fn nmi_is_handled_only_once() {
+    let (mut cpu, mut bus) = create_nmi_test(&[]);
+    bus.0[0x1234] = 0xA9; // handler: LDA #$42
+    bus.0[0x1235] = 0x42;
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus); // services NMI
+    let cycles = cpu.step(&mut bus); // runs the handler's first instruction
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.pc, 0x1236);
+    assert_eq!(cycles, 2);
+}
+
+#[test]
+fn no_nmi_without_trigger() {
+    let (mut cpu, mut bus) = create_nmi_test(&[0xA9, 0x42]);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.pc, STARTING_ADDRESS + 2);
+}
+
+#[test]
+fn nmi_then_rti_resumes_interrupted_code() {
+    // $8000: LDA #$42 is interrupted before it runs; handler at $1234 is RTI.
+    let (mut cpu, mut bus) = create_nmi_test(&[0xA9, 0x42]);
+    bus.0[0x1234] = 0x40;
+    cpu.status = Status(Status::UNUSED | Status::CARRY);
+
+    cpu.trigger_nmi();
+    cpu.step(&mut bus); // NMI
+    cpu.step(&mut bus); // RTI
+    assert_eq!(
+        cpu.registers.pc, STARTING_ADDRESS,
+        "PC = {:#06X}",
+        cpu.registers.pc
+    );
+    assert_eq!(cpu.status.0, Status::UNUSED | Status::CARRY);
+    assert_eq!(cpu.registers.sp, 0xFD);
+    cpu.step(&mut bus); // LDA #$42
+    assert_eq!(cpu.registers.a, 0x42);
+}
