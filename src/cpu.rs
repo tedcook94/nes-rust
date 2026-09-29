@@ -23,7 +23,7 @@ enum AddressingMode {
 }
 
 impl Cpu {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Cpu {
             registers: Registers {
                 a: 0,
@@ -38,18 +38,22 @@ impl Cpu {
         }
     }
 
-    fn reset<T: Bus>(&mut self, bus: &mut T) {
+    pub fn reset<T: Bus>(&mut self, bus: &mut T) {
         self.registers.sp = 0xFD;
         self.status.0 = 0x24;
         self.registers.pc = self.read_word(bus, 0xFFFC);
         self.cycle_count += 7;
     }
 
-    fn trigger_nmi(&mut self) {
+    pub fn trigger_nmi(&mut self) {
         self.nmi_pending = true;
     }
 
-    fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
+    pub fn cycle_count(&self) -> u64 {
+        self.cycle_count
+    }
+
+    pub fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
         if self.nmi_pending {
             self.nmi_pending = false;
             let cycles = self.interrupt(bus, 0xFFFA, false);

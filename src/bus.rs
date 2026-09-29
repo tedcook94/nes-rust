@@ -3,12 +3,12 @@ pub trait Bus {
     fn write(&mut self, address: u16, byte: u8);
 }
 
-struct CpuBus {
+pub struct CpuBus {
     ram: [u8; 0x800],
 }
 
 impl CpuBus {
-    fn new() -> Self {
+    pub fn new() -> Self {
         CpuBus { ram: [0; 0x800] }
     }
 }
