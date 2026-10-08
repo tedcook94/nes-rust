@@ -115,3 +115,24 @@ fn rejects_trainer() {
 
     assert_eq!(cartridge.err(), Some(RomError::Trainer));
 }
+
+// Mapper selection
+
+#[test]
+fn creates_mapper_zero() {
+    // PRG starts with $AA (from build_rom), so a working NROM reads it at $8000.
+    let mapper = create_mapper(Cartridge::parse(&build_rom(1, 1, 0, 0)).unwrap()).unwrap();
+
+    assert_eq!(mapper.cpu_read(0x8000), 0xAA);
+}
+
+#[test]
+fn rejects_unsupported_mapper() {
+    // Mapper 4 (MMC3): flags 6 high nibble = 4.
+    let cartridge = Cartridge::parse(&build_rom(1, 1, 0x40, 0)).unwrap();
+
+    assert_eq!(
+        create_mapper(cartridge).err(),
+        Some(RomError::UnsupportedMapper(4))
+    );
+}
