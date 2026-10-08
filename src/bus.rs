@@ -1,3 +1,5 @@
+use crate::cartridge::Mapper;
+
 pub trait Bus {
     fn read(&mut self, address: u16) -> u8;
     fn write(&mut self, address: u16, byte: u8);
@@ -5,11 +7,15 @@ pub trait Bus {
 
 pub struct CpuBus {
     ram: [u8; 0x800],
+    mapper: Box<dyn Mapper>,
 }
 
 impl CpuBus {
-    pub fn new() -> Self {
-        CpuBus { ram: [0; 0x800] }
+    pub fn new(mapper: Box<dyn Mapper>) -> Self {
+        CpuBus {
+            ram: [0; 0x800],
+            mapper,
+        }
     }
 }
 
@@ -20,7 +26,7 @@ impl Bus for CpuBus {
             0x2000..=0x3FFF => 0, // reserved for PPU
             0x4000..=0x4017 => 0, // reserved for APU and I/O
             0x4018..=0x401F => 0, // unused test registers
-            0x4020..=0xFFFF => 0, // reserved for cartridge
+            0x4020..=0xFFFF => self.mapper.cpu_read(address),
         }
     }
 
@@ -30,7 +36,7 @@ impl Bus for CpuBus {
             0x2000..=0x3FFF => (), // reserved for PPU
             0x4000..=0x4017 => (), // reserved for APU and I/O
             0x4018..=0x401F => (), // unused test registers
-            0x4020..=0xFFFF => (), // reserved for cartridge
+            0x4020..=0xFFFF => self.mapper.cpu_write(address, byte),
         }
     }
 }

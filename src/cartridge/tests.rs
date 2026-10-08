@@ -1,16 +1,5 @@
+use super::test_rom::*;
 use super::*;
-
-const PRG_UNIT: usize = 0x4000; // 16KB
-const CHR_UNIT: usize = 0x2000; // 8KB
-
-// Builds an iNES file in memory. PRG bytes are filled with 0xAA, CHR with 0xBB.
-fn build_rom(prg_units: u8, chr_units: u8, flags6: u8, flags7: u8) -> Vec<u8> {
-    let mut rom = vec![b'N', b'E', b'S', 0x1A, prg_units, chr_units, flags6, flags7];
-    rom.resize(16, 0);
-    rom.resize(16 + usize::from(prg_units) * PRG_UNIT, 0xAA);
-    rom.resize(rom.len() + usize::from(chr_units) * CHR_UNIT, 0xBB);
-    rom
-}
 
 #[test]
 fn parses_prg_and_chr_sizes() {

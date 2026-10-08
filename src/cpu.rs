@@ -49,6 +49,14 @@ impl Cpu {
         self.nmi_pending = true;
     }
 
+    pub fn pc(&self) -> u16 {
+        self.registers.pc
+    }
+
+    pub fn a(&self) -> u8 {
+        self.registers.a
+    }
+
     pub fn cycle_count(&self) -> u64 {
         self.cycle_count
     }

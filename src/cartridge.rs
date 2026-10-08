@@ -1,7 +1,7 @@
 use nrom::Nrom;
 
 #[derive(Debug, PartialEq)]
-enum RomError {
+pub enum RomError {
     BadMagic,
     Trainer,
     Truncated,
@@ -14,12 +14,12 @@ enum Mirroring {
     Vertical,
 }
 
-trait Mapper {
+pub trait Mapper {
     fn cpu_read(&self, address: u16) -> u8;
     fn cpu_write(&mut self, address: u16, value: u8);
 }
 
-struct Cartridge {
+pub struct Cartridge {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     mapper: u8,
@@ -27,7 +27,7 @@ struct Cartridge {
 }
 
 impl Cartridge {
-    fn parse(bytes: &[u8]) -> Result<Cartridge, RomError> {
+    pub fn parse(bytes: &[u8]) -> Result<Cartridge, RomError> {
         if bytes.len() < 16 {
             return Err(RomError::Truncated);
         }
@@ -67,7 +67,7 @@ impl Cartridge {
     }
 }
 
-fn create_mapper(cartridge: Cartridge) -> Result<Box<dyn Mapper>, RomError> {
+pub fn create_mapper(cartridge: Cartridge) -> Result<Box<dyn Mapper>, RomError> {
     match cartridge.mapper {
         0 => Ok(Box::new(Nrom::new(cartridge.prg_rom))),
         n => Err(RomError::UnsupportedMapper(n)),
@@ -75,6 +75,9 @@ fn create_mapper(cartridge: Cartridge) -> Result<Box<dyn Mapper>, RomError> {
 }
 
 mod nrom;
+
+#[cfg(test)]
+pub mod test_rom;
 
 #[cfg(test)]
 mod tests;
