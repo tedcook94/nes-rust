@@ -5663,3 +5663,77 @@ fn nmi_then_rti_resumes_interrupted_code() {
     cpu.step(&mut bus); // LDA #$42
     assert_eq!(cpu.registers.a, 0x42);
 }
+
+// State snapshot
+
+#[test]
+fn state_captures_registers_status_and_cycles() {
+    let (mut cpu, _bus) = create_test_cpu_and_bus(&[]);
+    cpu.registers.a = 0x11;
+    cpu.registers.x = 0x22;
+    cpu.registers.y = 0x33;
+    cpu.registers.sp = 0x44;
+    cpu.registers.pc = 0xC5F5;
+    cpu.status = Status(0xE5);
+    cpu.cycle_count = 12345;
+
+    assert_eq!(
+        cpu.state(),
+        CpuState {
+            pc: 0xC5F5,
+            a: 0x11,
+            x: 0x22,
+            y: 0x33,
+            p: 0xE5,
+            sp: 0x44,
+            cycles: 12345,
+        }
+    );
+}
+
+#[test]
+fn state_after_reset_matches_first_nestest_line() {
+    // nestest.log line 1 (after forcing PC to $C000): A:00 X:00 Y:00 P:24 SP:FD CYC:7
+    let (mut cpu, mut bus) = create_test_cpu_and_bus(&[]);
+    cpu.reset(&mut bus);
+    cpu.registers.pc = 0xC000;
+
+    assert_eq!(
+        cpu.state().to_string(),
+        "C000 A:00 X:00 Y:00 P:24 SP:FD CYC:7"
+    );
+}
+
+#[test]
+fn state_formats_like_nestest_log() {
+    let state = CpuState {
+        pc: 0xC5F5,
+        a: 0xAA,
+        x: 0x97,
+        y: 0x4E,
+        p: 0xEF,
+        sp: 0xF9,
+        cycles: 14579,
+    };
+
+    assert_eq!(
+        state.to_string(),
+        "C5F5 A:AA X:97 Y:4E P:EF SP:F9 CYC:14579"
+    );
+}
+
+#[test]
+fn state_formats_with_zero_padding() {
+    // Single-digit values must still print as two (or four) hex digits.
+    let state = CpuState {
+        pc: 0x0001,
+        a: 0x00,
+        x: 0x01,
+        y: 0x0A,
+        p: 0x04,
+        sp: 0x00,
+        cycles: 0,
+    };
+
+    assert_eq!(state.to_string(), "0001 A:00 X:01 Y:0A P:04 SP:00 CYC:0");
+}

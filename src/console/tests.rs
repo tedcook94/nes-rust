@@ -20,8 +20,13 @@ fn new_rejects_unsupported_mapper() {
 fn new_resets_cpu_to_cartridge_reset_vector() {
     let console = Console::new(&build_nrom_with_program(&[])).unwrap();
 
-    assert_eq!(console.cpu.cycle_count(), 7);
-    assert_eq!(console.cpu.pc(), 0xC000, "PC = {:#06X}", console.cpu.pc());
+    assert_eq!(console.cpu.state().cycles, 7);
+    assert_eq!(
+        console.cpu.state().pc,
+        0xC000,
+        "PC = {:#06X}",
+        console.cpu.state().pc
+    );
 }
 
 #[test]
@@ -31,8 +36,13 @@ fn step_runs_code_from_cartridge() {
 
     let cycles = console.step();
     assert_eq!(cycles, 2);
-    assert_eq!(console.cpu.pc(), 0xC002, "PC = {:#06X}", console.cpu.pc());
-    assert_eq!(console.cpu.cycle_count(), 7 + 2);
+    assert_eq!(
+        console.cpu.state().pc,
+        0xC002,
+        "PC = {:#06X}",
+        console.cpu.state().pc
+    );
+    assert_eq!(console.cpu.state().cycles, 7 + 2);
 }
 
 #[test]
@@ -56,5 +66,10 @@ fn program_can_write_and_read_ram() {
         console.step();
     }
     assert_eq!(console.bus.read(0x0200), 0x42);
-    assert_eq!(console.cpu.a(), 0x42, "A = {:#04X}", console.cpu.a());
+    assert_eq!(
+        console.cpu.state().a,
+        0x42,
+        "A = {:#04X}",
+        console.cpu.state().a
+    );
 }

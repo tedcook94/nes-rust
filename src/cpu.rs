@@ -7,6 +7,27 @@ pub struct Cpu {
     nmi_pending: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuState {
+    pub pc: u16,
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub p: u8,
+    pub cycles: u64,
+}
+
+impl std::fmt::Display for CpuState {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+            self.pc, self.a, self.x, self.y, self.p, self.sp, self.cycles
+        )
+    }
+}
+
 #[derive(Debug)]
 enum AddressingMode {
     Immediate,
@@ -49,16 +70,16 @@ impl Cpu {
         self.nmi_pending = true;
     }
 
-    pub fn pc(&self) -> u16 {
-        self.registers.pc
-    }
-
-    pub fn a(&self) -> u8 {
-        self.registers.a
-    }
-
-    pub fn cycle_count(&self) -> u64 {
-        self.cycle_count
+    pub fn state(&self) -> CpuState {
+        CpuState {
+            a: self.registers.a,
+            x: self.registers.x,
+            y: self.registers.y,
+            sp: self.registers.sp,
+            pc: self.registers.pc,
+            p: self.status.0,
+            cycles: self.cycle_count,
+        }
     }
 
     pub fn step<T: Bus>(&mut self, bus: &mut T) -> u8 {
