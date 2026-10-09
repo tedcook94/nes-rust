@@ -1,3 +1,4 @@
+#![allow(clippy::identity_op)]
 use super::*;
 
 struct TestBus([u8; 0x10000]);

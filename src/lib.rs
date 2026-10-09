@@ -1,4 +1,4 @@
 mod bus;
-mod cartridge;
-mod console;
-mod cpu;
+pub mod cartridge;
+pub mod console;
+pub mod cpu;

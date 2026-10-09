@@ -1,6 +1,6 @@
 use crate::bus::CpuBus;
 use crate::cartridge::{Cartridge, RomError, create_mapper};
-use crate::cpu::Cpu;
+use crate::cpu::{Cpu, CpuState};
 
 pub struct Console {
     cpu: Cpu,
@@ -8,7 +8,7 @@ pub struct Console {
 }
 
 impl Console {
-    fn new(rom: &[u8]) -> Result<Self, RomError> {
+    pub fn new(rom: &[u8]) -> Result<Self, RomError> {
         let cartridge = Cartridge::parse(rom)?;
 
         let mapper = create_mapper(cartridge)?;
@@ -21,8 +21,16 @@ impl Console {
         Ok(console)
     }
 
-    fn step(&mut self) -> u8 {
+    pub fn step(&mut self) -> u8 {
         self.cpu.step(&mut self.bus)
+    }
+
+    pub fn jump_to(&mut self, address: u16) {
+        self.cpu.set_pc(address);
+    }
+
+    pub fn cpu_state(&self) -> CpuState {
+        self.cpu.state()
     }
 }
 

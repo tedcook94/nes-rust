@@ -70,6 +70,10 @@ impl Cpu {
         self.nmi_pending = true;
     }
 
+    pub fn set_pc(&mut self, pc: u16) {
+        self.registers.pc = pc
+    }
+
     pub fn state(&self) -> CpuState {
         CpuState {
             a: self.registers.a,
@@ -996,6 +1000,12 @@ impl Cpu {
         self.status.set(Status::INTERRUPT_DISABLE, true);
         self.registers.pc = self.read_word(bus, vector);
         7
+    }
+}
+
+impl Default for Cpu {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
