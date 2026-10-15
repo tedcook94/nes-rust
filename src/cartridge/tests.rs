@@ -125,3 +125,19 @@ fn rejects_unsupported_mapper() {
         Some(RomError::UnsupportedMapper(4))
     );
 }
+
+#[test]
+fn created_mapper_reads_chr_from_cartridge() {
+    // CHR from build_rom is all $BB.
+    let mapper = create_mapper(Cartridge::parse(&build_rom(1, 1, 0, 0)).unwrap()).unwrap();
+
+    assert_eq!(mapper.ppu_read(0x0000), 0xBB);
+    assert_eq!(mapper.ppu_read(0x1FFF), 0xBB);
+}
+
+#[test]
+fn created_mapper_reports_header_mirroring() {
+    let mapper = create_mapper(Cartridge::parse(&build_rom(1, 1, 0x01, 0)).unwrap()).unwrap();
+
+    assert_eq!(mapper.mirroring(), Mirroring::Vertical);
+}

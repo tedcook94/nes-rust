@@ -8,8 +8,8 @@ pub enum RomError {
     UnsupportedMapper(u8),
 }
 
-#[derive(Debug, PartialEq)]
-enum Mirroring {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mirroring {
     Horizontal,
     Vertical,
 }
@@ -17,6 +17,9 @@ enum Mirroring {
 pub trait Mapper {
     fn cpu_read(&self, address: u16) -> u8;
     fn cpu_write(&mut self, address: u16, value: u8);
+    fn ppu_read(&self, address: u16) -> u8;
+    fn ppu_write(&mut self, address: u16, value: u8);
+    fn mirroring(&self) -> Mirroring;
 }
 
 pub struct Cartridge {
@@ -69,7 +72,11 @@ impl Cartridge {
 
 pub fn create_mapper(cartridge: Cartridge) -> Result<Box<dyn Mapper>, RomError> {
     match cartridge.mapper {
-        0 => Ok(Box::new(Nrom::new(cartridge.prg_rom))),
+        0 => Ok(Box::new(Nrom::new(
+            cartridge.prg_rom,
+            cartridge.chr_rom,
+            cartridge.mirroring,
+        ))),
         n => Err(RomError::UnsupportedMapper(n)),
     }
 }
