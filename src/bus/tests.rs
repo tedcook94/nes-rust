@@ -78,8 +78,7 @@ fn ram_does_not_extend_past_mirrors() {
 // Stubbed ranges
 
 // One address from the start, middle and end of each non-RAM range.
-const STUBBED_ADDRESSES: [u16; 10] = [
-    0x2000, 0x2007, 0x3FFF, // PPU registers and mirrors
+const STUBBED_ADDRESSES: [u16; 7] = [
     0x4000, 0x4014, 0x4017, // APU and I/O
     0x4018, 0x401F, // unused test-mode registers
     0x4020, 0x6000, // cartridge space below PRG (NROM has nothing here)
@@ -109,7 +108,7 @@ fn stubbed_range_writes_do_not_touch_ram() {
     // Catches applying the RAM mask to every address: $2042 & $07FF = $0042.
     let mut bus = create_bus();
 
-    for address in [0x2042, 0x4042, 0x6042] {
+    for address in [0x4042, 0x6042] {
         bus.write(address, 0x99);
     }
     assert_eq!(bus.read(0x0042), 0x00);
@@ -180,4 +179,59 @@ fn ram_writes_do_not_reach_cartridge() {
 
     bus.write(0x0000, 0x99);
     assert_eq!(bus.read(0x8000), 0xAA);
+}
+
+// PPU
+
+fn write_vram(bus: &mut CpuBus, address: u16, value: u8) {
+    let [low, high] = address.to_le_bytes();
+    bus.write(0x2006, high);
+    bus.write(0x2006, low);
+    bus.write(0x2007, value);
+}
+
+fn read_vram(bus: &mut CpuBus, address: u16) -> u8 {
+    let [low, high] = address.to_le_bytes();
+    bus.write(0x2006, high);
+    bus.write(0x2006, low);
+    bus.read(0x2007); // discard the stale buffered byte
+    bus.read(0x2007)
+}
+
+#[test]
+fn ppu_registers_reach_vram() {
+    let mut bus = create_bus();
+
+    write_vram(&mut bus, 0x2042, 0x99);
+    assert_eq!(read_vram(&mut bus, 0x2042), 0x99);
+}
+
+#[test]
+fn ppu_register_mirrors_reach_same_registers() {
+    // $3456 = $2006, $3FFF = $2007
+    let mut bus = create_bus();
+
+    bus.write(0x3456, 0x20);
+    bus.write(0x3456, 0x42);
+    bus.write(0x3FFF, 0x99);
+    assert_eq!(read_vram(&mut bus, 0x2042), 0x99);
+}
+
+#[test]
+fn ppu_reads_pattern_tables_from_cartridge_chr() {
+    // build_rom fills CHR with $BB.
+    let mut bus = create_bus();
+
+    assert_eq!(read_vram(&mut bus, 0x0000), 0xBB);
+}
+
+#[test]
+fn ppu_writes_do_not_touch_ram() {
+    // Catches applying the RAM mask: $2042 & $07FF = $0042.
+    let mut bus = create_bus();
+
+    bus.write(0x2042, 0x99);
+    bus.write(0x2006, 0x20);
+    assert_eq!(bus.read(0x0042), 0x00);
+    assert_eq!(bus.read(0x0006), 0x00);
 }
