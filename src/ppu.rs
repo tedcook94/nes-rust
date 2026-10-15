@@ -123,5 +123,7 @@ fn palette_index(address: u16) -> usize {
     }
 }
 
+pub mod tile;
+
 #[cfg(test)]
 mod tests;
