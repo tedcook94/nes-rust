@@ -3,14 +3,76 @@ use crate::cartridge::{Mapper, Mirroring};
 pub struct Ppu {
     nametables: [u8; 0x800],
     palettes: [u8; 0x20],
+    ctrl: u8,
+    v: u16,
+    w: bool,
+    read_buffer: u8,
 }
+
+const CTRL_INCREMENT_32: u8 = 0b0000_0100;
 
 impl Ppu {
     pub fn new() -> Self {
         Ppu {
             nametables: [0; 0x800],
             palettes: [0; 0x20],
+            ctrl: 0,
+            v: 0,
+            w: false,
+            read_buffer: 0,
         }
+    }
+
+    pub fn read_register(&mut self, register: u16, mapper: &dyn Mapper) -> u8 {
+        match register {
+            0x2002 => {
+                self.w = false;
+                0
+            }
+            0x2007 => {
+                let address = self.v;
+                let value = self.read(address, mapper);
+                let result = if address & 0x3FFF >= 0x3F00 {
+                    // Palette reads skip the buffer, but it still refills from the nametable below.
+                    self.read_buffer = self.read(address - 0x1000, mapper);
+                    value
+                } else {
+                    std::mem::replace(&mut self.read_buffer, value)
+                };
+                self.increment_v();
+                result
+            }
+            _ => 0, // write-only registers; open bus is not modeled
+        }
+    }
+
+    pub fn write_register(&mut self, register: u16, value: u8, mapper: &mut dyn Mapper) {
+        match register {
+            0x2000 => self.ctrl = value,
+            0x2006 => {
+                if self.w {
+                    self.v = (self.v & 0xFF00) | u16::from(value);
+                } else {
+                    // The PPU address bus is 14 bits.
+                    self.v = (u16::from(value & 0x3F) << 8) | (self.v & 0x00FF);
+                }
+                self.w = !self.w;
+            }
+            0x2007 => {
+                self.write(self.v, value, mapper);
+                self.increment_v();
+            }
+            _ => {}
+        }
+    }
+
+    fn increment_v(&mut self) {
+        let step = if self.ctrl & CTRL_INCREMENT_32 != 0 {
+            32
+        } else {
+            1
+        };
+        self.v = self.v.wrapping_add(step) & 0x3FFF;
     }
 
     fn read(&self, address: u16, mapper: &dyn Mapper) -> u8 {

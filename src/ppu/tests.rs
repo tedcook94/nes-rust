@@ -216,3 +216,180 @@ fn addresses_above_3fff_mirror_down() {
     ppu.write(0x6042, 0x99, &mut mapper);
     assert_eq!(ppu.read(0x2042, &mapper), 0x99);
 }
+
+// Registers
+
+fn set_address(ppu: &mut Ppu, mapper: &mut TestMapper, address: u16) {
+    let [low, high] = address.to_le_bytes();
+    ppu.write_register(0x2006, high, mapper);
+    ppu.write_register(0x2006, low, mapper);
+}
+
+#[test]
+fn ppuaddr_sets_high_byte_then_low_byte() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2006, 0x21, &mut mapper);
+    ppu.write_register(0x2006, 0x08, &mut mapper);
+    assert_eq!(ppu.v, 0x2108, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn ppuaddr_drops_top_two_bits() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0xFF00);
+    assert_eq!(ppu.v, 0x3F00, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn ppuaddr_third_write_starts_over_at_high_byte() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x2108);
+    ppu.write_register(0x2006, 0x3F, &mut mapper);
+    assert_eq!(ppu.v, 0x3F08, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn ppustatus_read_resets_write_toggle() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2006, 0x21, &mut mapper);
+    ppu.read_register(0x2002, &mapper);
+    ppu.write_register(0x2006, 0x23, &mut mapper);
+    ppu.write_register(0x2006, 0x45, &mut mapper);
+    assert_eq!(ppu.v, 0x2345, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn ppudata_write_goes_to_current_address() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x2042);
+    ppu.write_register(0x2007, 0x99, &mut mapper);
+    assert_eq!(ppu.read(0x2042, &mapper), 0x99);
+}
+
+#[test]
+fn ppudata_writes_increment_by_one() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x2000);
+    for value in [0x11, 0x22, 0x33] {
+        ppu.write_register(0x2007, value, &mut mapper);
+    }
+    assert_eq!(ppu.read(0x2000, &mapper), 0x11);
+    assert_eq!(ppu.read(0x2001, &mapper), 0x22);
+    assert_eq!(ppu.read(0x2002, &mapper), 0x33);
+    assert_eq!(ppu.v, 0x2003);
+}
+
+#[test]
+fn ppudata_writes_increment_by_32_when_ctrl_bit_2_set() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2000, 0b0000_0100, &mut mapper);
+    set_address(&mut ppu, &mut mapper, 0x2000);
+    ppu.write_register(0x2007, 0x11, &mut mapper);
+    ppu.write_register(0x2007, 0x22, &mut mapper);
+    assert_eq!(ppu.read(0x2000, &mapper), 0x11);
+    assert_eq!(ppu.read(0x2020, &mapper), 0x22);
+    assert_eq!(ppu.read(0x2001, &mapper), 0x00);
+    assert_eq!(ppu.v, 0x2040);
+}
+
+#[test]
+fn ppudata_write_reaches_pattern_tables_through_mapper() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x0123);
+    ppu.write_register(0x2007, 0x99, &mut mapper);
+    assert_eq!(mapper.chr[0x0123], 0x99);
+}
+
+#[test]
+fn ppudata_read_is_delayed_by_one() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write(0x2000, 0x11, &mut mapper);
+    ppu.write(0x2001, 0x22, &mut mapper);
+
+    set_address(&mut ppu, &mut mapper, 0x2000);
+    assert_eq!(ppu.read_register(0x2007, &mapper), 0x00, "stale buffer");
+    assert_eq!(ppu.read_register(0x2007, &mapper), 0x11);
+    assert_eq!(ppu.read_register(0x2007, &mapper), 0x22);
+}
+
+#[test]
+fn ppudata_reads_increment_address() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x2000);
+    ppu.read_register(0x2007, &mapper);
+    ppu.read_register(0x2007, &mapper);
+    assert_eq!(ppu.v, 0x2002);
+}
+
+#[test]
+fn ppudata_reads_increment_by_32_when_ctrl_bit_2_set() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2000, 0b0000_0100, &mut mapper);
+    set_address(&mut ppu, &mut mapper, 0x2000);
+    ppu.read_register(0x2007, &mapper);
+    assert_eq!(ppu.v, 0x2020);
+}
+
+#[test]
+fn palette_read_is_not_delayed() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write(0x3F01, 0x2A, &mut mapper);
+
+    set_address(&mut ppu, &mut mapper, 0x3F01);
+    assert_eq!(ppu.read_register(0x2007, &mapper), 0x2A);
+}
+
+#[test]
+fn palette_read_fills_buffer_from_nametable_underneath() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write(0x3F01, 0x2A, &mut mapper);
+    ppu.write(0x2F01, 0x77, &mut mapper);
+
+    set_address(&mut ppu, &mut mapper, 0x3F01);
+    ppu.read_register(0x2007, &mapper);
+    set_address(&mut ppu, &mut mapper, 0x2000);
+    assert_eq!(ppu.read_register(0x2007, &mapper), 0x77);
+}
+
+#[test]
+fn ppudata_address_wraps_after_3fff() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x3FFF);
+    ppu.write_register(0x2007, 0x2A, &mut mapper);
+    assert_eq!(ppu.v, 0x0000, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn ppuctrl_write_does_not_change_address() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x2108);
+    ppu.write_register(0x2000, 0xFF, &mut mapper);
+    assert_eq!(ppu.v, 0x2108);
+}
