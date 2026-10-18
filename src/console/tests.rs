@@ -183,3 +183,35 @@ fn no_nmi_when_disabled() {
 
     assert!(!step_until_pc(&mut console, 0xC012));
 }
+
+// Frames
+
+#[test]
+fn step_frame_runs_one_frame() {
+    // A frame is 89,342 dots, about 29,781 CPU cycles.
+    let mut console = Console::new(&build_nrom_with_program(&[0x4C, 0x00, 0xC0])).unwrap();
+
+    console.step_frame();
+    let first = console.cpu_state().cycles;
+    console.step_frame();
+    let second = console.cpu_state().cycles;
+    assert!(
+        (29_775..=29_785).contains(&(second - first)),
+        "frame took {} cycles",
+        second - first
+    );
+}
+
+#[test]
+fn frame_shows_backdrop_written_by_program() {
+    // LDA #$3F / STA $2006 / LDA #$00 / STA $2006 / LDA #$21 / STA $2007 / JMP self
+    let program = [
+        0xA9, 0x3F, 0x8D, 0x06, 0x20, 0xA9, 0x00, 0x8D, 0x06, 0x20, 0xA9, 0x21, 0x8D, 0x07, 0x20,
+        0x4C, 0x0F, 0xC0,
+    ];
+    let mut console = Console::new(&build_nrom_with_program(&program)).unwrap();
+
+    console.step_frame();
+    assert_eq!(console.frame().len(), 256 * 240);
+    assert!(console.frame().iter().all(|&p| p == 0x21));
+}

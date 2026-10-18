@@ -29,6 +29,19 @@ impl Console {
         cycles
     }
 
+    pub fn step_frame(&mut self) {
+        loop {
+            self.step();
+            if self.bus.take_frame_ready() {
+                return;
+            }
+        }
+    }
+
+    pub fn frame(&self) -> &[u8] {
+        self.bus.frame()
+    }
+
     pub fn jump_to(&mut self, address: u16) {
         self.cpu.set_pc(address);
     }

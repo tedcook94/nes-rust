@@ -31,6 +31,11 @@ impl Mapper for TestMapper {
     }
 }
 
+static IDLE_MAPPER: TestMapper = TestMapper {
+    chr: [0; 0x2000],
+    mirroring: Mirroring::Horizontal,
+};
+
 // Pattern tables
 
 #[test]
@@ -400,7 +405,7 @@ const DOTS_PER_FRAME: u32 = 341 * 262;
 
 fn tick_to(ppu: &mut Ppu, scanline: u16, dot: u16) {
     while (ppu.scanline, ppu.dot) != (scanline, dot) {
-        ppu.tick();
+        ppu.tick(&IDLE_MAPPER);
     }
 }
 
@@ -413,7 +418,7 @@ fn dot_wraps_to_next_scanline_after_340() {
     let mut ppu = Ppu::new();
 
     tick_to(&mut ppu, 0, 340);
-    ppu.tick();
+    ppu.tick(&IDLE_MAPPER);
     assert_eq!((ppu.scanline, ppu.dot), (1, 0));
 }
 
@@ -422,7 +427,7 @@ fn frame_is_341_dots_by_262_scanlines() {
     let mut ppu = Ppu::new();
 
     for _ in 0..DOTS_PER_FRAME {
-        ppu.tick();
+        ppu.tick(&IDLE_MAPPER);
     }
     assert_eq!((ppu.scanline, ppu.dot), (0, 0));
 }
@@ -436,7 +441,7 @@ fn vblank_starts_at_scanline_241_dot_1() {
         !ppu.vblank,
         "not yet: the flag is set while processing dot 1"
     );
-    ppu.tick();
+    ppu.tick(&IDLE_MAPPER);
     assert!(ppu.vblank);
 }
 
@@ -446,7 +451,7 @@ fn vblank_ends_on_pre_render_scanline() {
 
     tick_to(&mut ppu, 261, 1);
     assert!(ppu.vblank);
-    ppu.tick();
+    ppu.tick(&IDLE_MAPPER);
     assert!(!ppu.vblank);
 }
 
@@ -457,7 +462,7 @@ fn vblank_repeats_every_frame() {
     tick_to(&mut ppu, 241, 2);
     read_status(&mut ppu);
     for _ in 0..DOTS_PER_FRAME {
-        ppu.tick();
+        ppu.tick(&IDLE_MAPPER);
     }
     assert!(ppu.vblank);
 }
@@ -555,4 +560,210 @@ fn enabling_nmi_outside_vblank_does_not_raise_it() {
     tick_to(&mut ppu, 100, 0);
     ppu.write_register(0x2000, 0x80, &mut mapper);
     assert!(!ppu.take_nmi());
+}
+
+// Background rendering
+
+fn render(ppu: &mut Ppu, mapper: &TestMapper) {
+    tick_to_with(ppu, mapper, 241, 2);
+}
+
+fn tick_to_with(ppu: &mut Ppu, mapper: &TestMapper, scanline: u16, dot: u16) {
+    while (ppu.scanline, ppu.dot) != (scanline, dot) {
+        ppu.tick(mapper);
+    }
+}
+
+fn pixel(ppu: &Ppu, x: usize, y: usize) -> u8 {
+    ppu.frame()[y * WIDTH + x]
+}
+
+// Tile 1: row 0 is colors 0,1,2,3,0,1,2,3; every other row is color 3.
+fn mapper_with_test_tile(base: usize) -> TestMapper {
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    let tile = base + 16;
+    mapper.chr[tile] = 0b0101_0101;
+    mapper.chr[tile + 8] = 0b0011_0011;
+    for y in 1..8 {
+        mapper.chr[tile + y] = 0xFF;
+        mapper.chr[tile + 8 + y] = 0xFF;
+    }
+    mapper
+}
+
+fn set_palettes(ppu: &mut Ppu, mapper: &mut TestMapper) {
+    ppu.write(0x3F00, 0x0F, mapper); // backdrop
+    for palette in 0..4u16 {
+        for color in 1..4u16 {
+            // Background palette p, color c → value $pc, so each is distinct.
+            ppu.write(
+                0x3F00 + palette * 4 + color,
+                0x10 * palette as u8 + color as u8,
+                mapper,
+            );
+        }
+    }
+}
+
+fn enable_background(ppu: &mut Ppu, mapper: &mut TestMapper) {
+    ppu.write_register(0x2001, 0b0000_1000, mapper);
+}
+
+#[test]
+fn background_disabled_fills_frame_with_backdrop() {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert!(ppu.frame().iter().all(|&p| p == 0x0F));
+}
+
+#[test]
+fn tile_colors_map_through_palette() {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    let row: Vec<u8> = (0..8).map(|x| pixel(&ppu, x, 0)).collect();
+    assert_eq!(row, [0x0F, 0x01, 0x02, 0x03, 0x0F, 0x01, 0x02, 0x03]);
+    assert_eq!(pixel(&ppu, 0, 7), 0x03);
+}
+
+#[test]
+fn color_zero_uses_backdrop_not_palette_entry_zero() {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x3F04, 0x2A, &mut mapper); // palette 1 entry 0: unused for rendering
+    ppu.write(0x23C0, 0b0000_0001, &mut mapper); // top-left quadrant uses palette 1
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 0, 0), 0x0F);
+    assert_eq!(pixel(&ppu, 1, 0), 0x11);
+}
+
+#[test]
+fn tile_is_placed_by_nametable_position() {
+    // Tile 1 at column 5, row 3 → pixels (40..48, 24..32).
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000 + 3 * 32 + 5, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 41, 24), 0x01);
+    assert_eq!(pixel(&ppu, 41, 23), 0x0F);
+    assert_eq!(pixel(&ppu, 49, 24), 0x0F);
+}
+
+#[test]
+fn attribute_quadrants_select_palettes() {
+    // Attribute byte $23C0 covers tiles (0..4, 0..4):
+    // bits 0-1 top-left, 2-3 top-right, 4-5 bottom-left, 6-7 bottom-right.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    for (column, row) in [(0, 0), (2, 0), (0, 2), (2, 2)] {
+        ppu.write(0x2000 + row * 32 + column, 0x01, &mut mapper);
+    }
+    ppu.write(0x23C0, 0b11_10_01_00, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 1, 0), 0x01, "top-left: palette 0");
+    assert_eq!(pixel(&ppu, 17, 0), 0x11, "top-right: palette 1");
+    assert_eq!(pixel(&ppu, 1, 16), 0x21, "bottom-left: palette 2");
+    assert_eq!(pixel(&ppu, 17, 16), 0x31, "bottom-right: palette 3");
+}
+
+#[test]
+fn attribute_byte_is_chosen_per_4x4_tile_block() {
+    // Tile at column 4 uses the second attribute byte, $23C1.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2004, 0x01, &mut mapper);
+    ppu.write(0x23C1, 0b0000_0011, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 33, 0), 0x31);
+}
+
+#[test]
+fn ctrl_bit_4_selects_pattern_table_at_1000() {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0x1000);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 1, 0), 0x0F, "table $0000 tile 1 is blank");
+
+    let mut ppu = Ppu::new();
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    ppu.write_register(0x2000, 0b0001_0000, &mut mapper);
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 1, 0), 0x01);
+}
+
+#[test]
+fn ctrl_bits_0_and_1_select_nametable() {
+    // Vertical mirroring: $2400 is a separate table from $2000.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    mapper.mirroring = Mirroring::Vertical;
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2400, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    ppu.write_register(0x2000, 0b0000_0001, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 1, 0), 0x01);
+}
+
+#[test]
+fn bottom_right_tile_is_rendered() {
+    // Column 31, row 29 → pixels (248..256, 232..240).
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000 + 29 * 32 + 31, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 255, 239), 0x03);
+}
+
+#[test]
+fn frame_is_ready_once_per_frame_at_vblank() {
+    let mut ppu = Ppu::new();
+    let mapper = TestMapper::new(Mirroring::Horizontal);
+
+    tick_to_with(&mut ppu, &mapper, 241, 1);
+    assert!(!ppu.take_frame_ready());
+    ppu.tick(&mapper);
+    assert!(ppu.take_frame_ready());
+    assert!(!ppu.take_frame_ready());
+}
+
+#[test]
+fn rendered_palette_values_use_low_6_bits() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write(0x3F00, 0xC5, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 0, 0), 0x05);
 }

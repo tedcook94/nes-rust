@@ -23,9 +23,17 @@ impl CpuBus {
 
     pub fn tick_ppu(&mut self, cpu_cycles: u8) -> bool {
         for _ in 0..u32::from(cpu_cycles) * 3 {
-            self.ppu.tick();
+            self.ppu.tick(&*self.mapper);
         }
         self.ppu.take_nmi()
+    }
+
+    pub fn take_frame_ready(&mut self) -> bool {
+        self.ppu.take_frame_ready()
+    }
+
+    pub fn frame(&self) -> &[u8] {
+        self.ppu.frame()
     }
 }
 
