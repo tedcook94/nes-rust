@@ -235,3 +235,63 @@ fn ppu_writes_do_not_touch_ram() {
     assert_eq!(bus.read(0x0042), 0x00);
     assert_eq!(bus.read(0x0006), 0x00);
 }
+
+// OAM DMA
+
+fn read_oam(bus: &mut CpuBus, index: u8) -> u8 {
+    bus.write(0x2003, index);
+    bus.read(0x2004)
+}
+
+#[test]
+fn oam_dma_copies_page_into_oam() {
+    let mut bus = create_bus();
+    for offset in 0..=0xFFu16 {
+        bus.write(0x0200 + offset, offset as u8 ^ 0x5A);
+    }
+
+    bus.write(0x4014, 0x02);
+    for index in [0x00, 0x01, 0x80, 0xFF] {
+        assert_eq!(read_oam(&mut bus, index), index ^ 0x5A, "OAM {index:#04X}");
+    }
+}
+
+#[test]
+fn oam_dma_reads_through_bus_mirrors() {
+    // Page $08 is a RAM mirror of page $00.
+    let mut bus = create_bus();
+    bus.write(0x0042, 0x99);
+
+    bus.write(0x4014, 0x08);
+    assert_eq!(read_oam(&mut bus, 0x42), 0x99);
+}
+
+#[test]
+fn oam_dma_starts_at_current_oam_address() {
+    // DMA writes through $2004, so it begins at OAMADDR and wraps.
+    let mut bus = create_bus();
+    bus.write(0x0200, 0x11);
+    bus.write(0x2003, 0x10);
+
+    bus.write(0x4014, 0x02);
+    assert_eq!(read_oam(&mut bus, 0x10), 0x11);
+}
+
+#[test]
+fn oam_dma_is_reported_once() {
+    let mut bus = create_bus();
+
+    assert!(!bus.take_dma());
+    bus.write(0x4014, 0x02);
+    assert!(bus.take_dma());
+    assert!(!bus.take_dma());
+}
+
+#[test]
+fn oam_dma_does_not_write_ram() {
+    let mut bus = create_bus();
+
+    bus.write(0x4014, 0x02);
+    assert_eq!(bus.read(0x0014), 0x00);
+    assert_eq!(bus.read(0x0002), 0x00);
+}

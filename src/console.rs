@@ -21,8 +21,14 @@ impl Console {
         Ok(console)
     }
 
-    pub fn step(&mut self) -> u8 {
-        let cycles = self.cpu.step(&mut self.bus);
+    pub fn step(&mut self) -> u16 {
+        let mut cycles = u16::from(self.cpu.step(&mut self.bus));
+        if self.bus.take_dma() {
+            // DMA halts the CPU for 513 cycles, plus one to align when it starts on an odd cycle.
+            let stall = 513 + u16::from(self.cpu.state().cycles % 2 == 1);
+            self.cpu.stall(stall);
+            cycles += stall;
+        }
         if self.bus.tick_ppu(cycles) {
             self.cpu.trigger_nmi();
         }

@@ -10,6 +10,7 @@ pub struct CpuBus {
     ram: [u8; 0x800],
     ppu: Ppu,
     mapper: Box<dyn Mapper>,
+    dma_pending: bool,
 }
 
 impl CpuBus {
@@ -18,10 +19,15 @@ impl CpuBus {
             ram: [0; 0x800],
             ppu: Ppu::new(),
             mapper,
+            dma_pending: false,
         }
     }
 
-    pub fn tick_ppu(&mut self, cpu_cycles: u8) -> bool {
+    pub fn take_dma(&mut self) -> bool {
+        std::mem::take(&mut self.dma_pending)
+    }
+
+    pub fn tick_ppu(&mut self, cpu_cycles: u16) -> bool {
         for _ in 0..u32::from(cpu_cycles) * 3 {
             self.ppu.tick(&*self.mapper);
         }
@@ -55,10 +61,22 @@ impl Bus for CpuBus {
                 self.ppu
                     .write_register(ppu_register(address), byte, &mut *self.mapper)
             }
+            0x4014 => self.oam_dma(byte),
             0x4000..=0x4017 => (), // reserved for APU and I/O
             0x4018..=0x401F => (), // unused test registers
             0x4020..=0xFFFF => self.mapper.cpu_write(address, byte),
         }
+    }
+}
+
+impl CpuBus {
+    fn oam_dma(&mut self, page: u8) {
+        let start = u16::from(page) << 8;
+        for offset in 0..0x100 {
+            let value = self.read(start + offset);
+            self.ppu.write_register(0x2004, value, &mut *self.mapper);
+        }
+        self.dma_pending = true;
     }
 }
 

@@ -9,6 +9,8 @@ pub struct Ppu {
     palettes: [u8; 0x20],
     ctrl: u8,
     mask: u8,
+    oam: [u8; 0x100],
+    oam_address: u8,
     v: u16,
     w: bool,
     read_buffer: u8,
@@ -39,6 +41,8 @@ impl Ppu {
             palettes: [0; 0x20],
             ctrl: 0,
             mask: 0,
+            oam: [0; 0x100],
+            oam_address: 0,
             v: 0,
             w: false,
             read_buffer: 0,
@@ -139,6 +143,7 @@ impl Ppu {
                     0
                 }
             }
+            0x2004 => self.oam[usize::from(self.oam_address)],
             0x2007 => {
                 let address = self.v;
                 let value = self.read(address, mapper);
@@ -167,6 +172,11 @@ impl Ppu {
                 }
             }
             0x2001 => self.mask = value,
+            0x2003 => self.oam_address = value,
+            0x2004 => {
+                self.oam[usize::from(self.oam_address)] = value;
+                self.oam_address = self.oam_address.wrapping_add(1);
+            }
             0x2006 => {
                 if self.w {
                     self.v = (self.v & 0xFF00) | u16::from(value);

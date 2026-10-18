@@ -70,6 +70,11 @@ impl Cpu {
         self.nmi_pending = true;
     }
 
+    /// Counts cycles where the CPU is halted, such as during OAM DMA.
+    pub fn stall(&mut self, cycles: u16) {
+        self.cycle_count += u64::from(cycles);
+    }
+
     pub fn set_pc(&mut self, pc: u16) {
         self.registers.pc = pc
     }

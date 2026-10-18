@@ -215,3 +215,45 @@ fn frame_shows_backdrop_written_by_program() {
     assert_eq!(console.frame().len(), 256 * 240);
     assert!(console.frame().iter().all(|&p| p == 0x21));
 }
+
+// OAM DMA stall
+
+#[test]
+fn oam_dma_stalls_cpu_513_cycles_on_even_cycle() {
+    // LDA $10 (3) / STA $4014 (4): reset 7 + 3 + 4 = 14, even.
+    let mut console =
+        Console::new(&build_nrom_with_program(&[0xA5, 0x10, 0x8D, 0x14, 0x40])).unwrap();
+
+    console.step();
+    assert_eq!(console.step(), 4 + 513);
+    assert_eq!(console.cpu_state().cycles, 14 + 513);
+}
+
+#[test]
+fn oam_dma_stalls_cpu_514_cycles_on_odd_cycle() {
+    // LDA #$02 (2) / STA $4014 (4): reset 7 + 2 + 4 = 13, odd.
+    let mut console =
+        Console::new(&build_nrom_with_program(&[0xA9, 0x02, 0x8D, 0x14, 0x40])).unwrap();
+
+    console.step();
+    assert_eq!(console.step(), 4 + 514);
+    assert_eq!(console.cpu_state().cycles, 13 + 514);
+}
+
+#[test]
+fn ppu_runs_during_oam_dma_stall() {
+    // A frame is ~29,781 cycles. With a DMA in the loop, frames take fewer instructions
+    // but the same number of cycles.
+    // $C000: LDA #$02 / STA $4014 / JMP $C000
+    let program = [0xA9, 0x02, 0x8D, 0x14, 0x40, 0x4C, 0x00, 0xC0];
+    let mut console = Console::new(&build_nrom_with_program(&program)).unwrap();
+
+    console.step_frame();
+    let first = console.cpu_state().cycles;
+    console.step_frame();
+    let frame = console.cpu_state().cycles - first;
+    assert!(
+        (29_000..=30_600).contains(&frame),
+        "frame took {frame} cycles"
+    );
+}

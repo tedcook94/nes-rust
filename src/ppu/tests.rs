@@ -767,3 +767,51 @@ fn rendered_palette_values_use_low_6_bits() {
     render(&mut ppu, &mapper);
     assert_eq!(pixel(&ppu, 0, 0), 0x05);
 }
+
+// OAM
+
+#[test]
+fn oamdata_write_goes_to_oam_address() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2003, 0x10, &mut mapper);
+    ppu.write_register(0x2004, 0x99, &mut mapper);
+    assert_eq!(ppu.oam[0x10], 0x99);
+}
+
+#[test]
+fn oamdata_writes_increment_address() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2003, 0x10, &mut mapper);
+    ppu.write_register(0x2004, 0x11, &mut mapper);
+    ppu.write_register(0x2004, 0x22, &mut mapper);
+    assert_eq!(ppu.oam[0x10..0x12], [0x11, 0x22]);
+    assert_eq!(ppu.oam_address, 0x12);
+}
+
+#[test]
+fn oamdata_read_does_not_increment_address() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.oam[0x10] = 0x99;
+
+    ppu.write_register(0x2003, 0x10, &mut mapper);
+    assert_eq!(ppu.read_register(0x2004, &mapper), 0x99);
+    assert_eq!(ppu.read_register(0x2004, &mapper), 0x99);
+    assert_eq!(ppu.oam_address, 0x10);
+}
+
+#[test]
+fn oam_address_wraps_after_ff() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2003, 0xFF, &mut mapper);
+    ppu.write_register(0x2004, 0x11, &mut mapper);
+    ppu.write_register(0x2004, 0x22, &mut mapper);
+    assert_eq!(ppu.oam[0xFF], 0x11);
+    assert_eq!(ppu.oam[0x00], 0x22);
+}
