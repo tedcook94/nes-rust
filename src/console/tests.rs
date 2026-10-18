@@ -123,3 +123,63 @@ fn step_after_jump_runs_code_at_new_address() {
     assert_eq!(console.cpu_state().a, 0x42);
     assert_eq!(console.cpu_state().pc, 0xC012);
 }
+
+// PPU timing
+
+const STEP_LIMIT: usize = 100_000;
+
+fn step_until_pc(console: &mut Console, pc: u16) -> bool {
+    (0..STEP_LIMIT).any(|_| {
+        console.step();
+        console.cpu_state().pc == pc
+    })
+}
+
+#[test]
+fn program_waiting_for_vblank_continues_after_it() {
+    // $C000: BIT $2002 / BPL $C000 / LDA #$42
+    let program = [0x2C, 0x02, 0x20, 0x10, 0xFB, 0xA9, 0x42];
+    let mut console = Console::new(&build_nrom_with_program(&program)).unwrap();
+
+    assert!(
+        step_until_pc(&mut console, 0xC005),
+        "never left the vblank loop"
+    );
+    // Vblank starts 241 * 341 + 1 dots after reset's 7 cycles, so about cycle 27,401.
+    // The loop polls every 7 cycles, so the exit lands up to one iteration later.
+    let cycles = console.cpu_state().cycles;
+    assert!((27_401..=27_416).contains(&cycles), "cycles = {cycles}");
+}
+
+#[test]
+fn vblank_nmi_runs_handler() {
+    // $C000: LDA #$80 / STA $2000 / JMP $C005. NMI handler at $C010: LDX #$42 / RTI.
+    let mut program = [0xEA; 0x13];
+    program[..8].copy_from_slice(&[0xA9, 0x80, 0x8D, 0x00, 0x20, 0x4C, 0x05, 0xC0]);
+    program[0x10..].copy_from_slice(&[0xA2, 0x42, 0x40]);
+    let mut rom = build_nrom_with_program(&program);
+    rom[16 + 0x3FFA] = 0x10; // NMI vector → $C010
+    rom[16 + 0x3FFB] = 0xC0;
+    let mut console = Console::new(&rom).unwrap();
+
+    assert!(step_until_pc(&mut console, 0xC012), "NMI handler never ran");
+    assert_eq!(console.cpu_state().x, 0x42);
+    assert!(
+        step_until_pc(&mut console, 0xC005),
+        "RTI didn't return to the loop"
+    );
+}
+
+#[test]
+fn no_nmi_when_disabled() {
+    // $C000: JMP $C000. NMI vector → $C010 (LDX #$42), which must never run.
+    let mut program = [0xEA; 0x12];
+    program[..3].copy_from_slice(&[0x4C, 0x00, 0xC0]);
+    program[0x10..].copy_from_slice(&[0xA2, 0x42]);
+    let mut rom = build_nrom_with_program(&program);
+    rom[16 + 0x3FFA] = 0x10;
+    rom[16 + 0x3FFB] = 0xC0;
+    let mut console = Console::new(&rom).unwrap();
+
+    assert!(!step_until_pc(&mut console, 0xC012));
+}

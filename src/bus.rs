@@ -20,6 +20,13 @@ impl CpuBus {
             mapper,
         }
     }
+
+    pub fn tick_ppu(&mut self, cpu_cycles: u8) -> bool {
+        for _ in 0..u32::from(cpu_cycles) * 3 {
+            self.ppu.tick();
+        }
+        self.ppu.take_nmi()
+    }
 }
 
 impl Bus for CpuBus {

@@ -393,3 +393,166 @@ fn ppuctrl_write_does_not_change_address() {
     ppu.write_register(0x2000, 0xFF, &mut mapper);
     assert_eq!(ppu.v, 0x2108);
 }
+
+// Timing
+
+const DOTS_PER_FRAME: u32 = 341 * 262;
+
+fn tick_to(ppu: &mut Ppu, scanline: u16, dot: u16) {
+    while (ppu.scanline, ppu.dot) != (scanline, dot) {
+        ppu.tick();
+    }
+}
+
+fn read_status(ppu: &mut Ppu) -> u8 {
+    ppu.read_register(0x2002, &TestMapper::new(Mirroring::Horizontal))
+}
+
+#[test]
+fn dot_wraps_to_next_scanline_after_340() {
+    let mut ppu = Ppu::new();
+
+    tick_to(&mut ppu, 0, 340);
+    ppu.tick();
+    assert_eq!((ppu.scanline, ppu.dot), (1, 0));
+}
+
+#[test]
+fn frame_is_341_dots_by_262_scanlines() {
+    let mut ppu = Ppu::new();
+
+    for _ in 0..DOTS_PER_FRAME {
+        ppu.tick();
+    }
+    assert_eq!((ppu.scanline, ppu.dot), (0, 0));
+}
+
+#[test]
+fn vblank_starts_at_scanline_241_dot_1() {
+    let mut ppu = Ppu::new();
+
+    tick_to(&mut ppu, 241, 1);
+    assert!(
+        !ppu.vblank,
+        "not yet: the flag is set while processing dot 1"
+    );
+    ppu.tick();
+    assert!(ppu.vblank);
+}
+
+#[test]
+fn vblank_ends_on_pre_render_scanline() {
+    let mut ppu = Ppu::new();
+
+    tick_to(&mut ppu, 261, 1);
+    assert!(ppu.vblank);
+    ppu.tick();
+    assert!(!ppu.vblank);
+}
+
+#[test]
+fn vblank_repeats_every_frame() {
+    let mut ppu = Ppu::new();
+
+    tick_to(&mut ppu, 241, 2);
+    read_status(&mut ppu);
+    for _ in 0..DOTS_PER_FRAME {
+        ppu.tick();
+    }
+    assert!(ppu.vblank);
+}
+
+// PPUSTATUS
+
+#[test]
+fn ppustatus_reports_vblank_in_bit_7() {
+    let mut ppu = Ppu::new();
+
+    assert_eq!(read_status(&mut ppu) & 0x80, 0);
+    tick_to(&mut ppu, 241, 2);
+    assert_eq!(read_status(&mut ppu) & 0x80, 0x80);
+}
+
+#[test]
+fn ppustatus_read_clears_vblank() {
+    let mut ppu = Ppu::new();
+
+    tick_to(&mut ppu, 241, 2);
+    read_status(&mut ppu);
+    assert_eq!(read_status(&mut ppu) & 0x80, 0);
+}
+
+// NMI
+
+#[test]
+fn vblank_raises_nmi_when_enabled() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+
+    tick_to(&mut ppu, 241, 2);
+    assert!(ppu.take_nmi());
+}
+
+#[test]
+fn vblank_does_not_raise_nmi_when_disabled() {
+    let mut ppu = Ppu::new();
+
+    tick_to(&mut ppu, 241, 2);
+    assert!(!ppu.take_nmi());
+}
+
+#[test]
+fn take_nmi_clears_it() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+
+    tick_to(&mut ppu, 241, 2);
+    assert!(ppu.take_nmi());
+    assert!(!ppu.take_nmi());
+}
+
+#[test]
+fn nmi_is_raised_once_per_frame() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+
+    tick_to(&mut ppu, 241, 2);
+    ppu.take_nmi();
+    tick_to(&mut ppu, 260, 0);
+    assert!(!ppu.take_nmi());
+}
+
+#[test]
+fn enabling_nmi_during_vblank_raises_it_immediately() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    tick_to(&mut ppu, 245, 0);
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+    assert!(ppu.take_nmi());
+}
+
+#[test]
+fn rewriting_enabled_nmi_during_vblank_does_not_raise_again() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+
+    tick_to(&mut ppu, 245, 0);
+    ppu.take_nmi();
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+    assert!(!ppu.take_nmi());
+}
+
+#[test]
+fn enabling_nmi_outside_vblank_does_not_raise_it() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    tick_to(&mut ppu, 100, 0);
+    ppu.write_register(0x2000, 0x80, &mut mapper);
+    assert!(!ppu.take_nmi());
+}

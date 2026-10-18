@@ -7,9 +7,20 @@ pub struct Ppu {
     v: u16,
     w: bool,
     read_buffer: u8,
+    vblank: bool,
+    nmi_pending: bool,
+    dot: u16,
+    scanline: u16,
 }
 
 const CTRL_INCREMENT_32: u8 = 0b0000_0100;
+const CTRL_NMI_ENABLE: u8 = 0b1000_0000;
+const STATUS_VBLANK: u8 = 0b1000_0000;
+
+const DOTS_PER_SCANLINE: u16 = 341;
+const SCANLINES_PER_FRAME: u16 = 262;
+const VBLANK_SCANLINE: u16 = 241;
+const PRE_RENDER_SCANLINE: u16 = 261;
 
 impl Ppu {
     pub fn new() -> Self {
@@ -20,14 +31,49 @@ impl Ppu {
             v: 0,
             w: false,
             read_buffer: 0,
+            vblank: false,
+            nmi_pending: false,
+            dot: 0,
+            scanline: 0,
         }
+    }
+
+    /// Advances one dot. The PPU runs three dots per CPU cycle.
+    pub fn tick(&mut self) {
+        if self.dot == 1 {
+            match self.scanline {
+                VBLANK_SCANLINE => {
+                    self.vblank = true;
+                    if self.ctrl & CTRL_NMI_ENABLE != 0 {
+                        self.nmi_pending = true;
+                    }
+                }
+                PRE_RENDER_SCANLINE => self.vblank = false,
+                _ => {}
+            }
+        }
+
+        self.dot += 1;
+        if self.dot == DOTS_PER_SCANLINE {
+            self.dot = 0;
+            self.scanline = (self.scanline + 1) % SCANLINES_PER_FRAME;
+        }
+    }
+
+    /// Returns whether an NMI was raised since the last call, and clears it.
+    pub fn take_nmi(&mut self) -> bool {
+        std::mem::take(&mut self.nmi_pending)
     }
 
     pub fn read_register(&mut self, register: u16, mapper: &dyn Mapper) -> u8 {
         match register {
             0x2002 => {
                 self.w = false;
-                0
+                if std::mem::take(&mut self.vblank) {
+                    STATUS_VBLANK
+                } else {
+                    0
+                }
             }
             0x2007 => {
                 let address = self.v;
@@ -48,7 +94,14 @@ impl Ppu {
 
     pub fn write_register(&mut self, register: u16, value: u8, mapper: &mut dyn Mapper) {
         match register {
-            0x2000 => self.ctrl = value,
+            0x2000 => {
+                let was_enabled = self.ctrl & CTRL_NMI_ENABLE != 0;
+                self.ctrl = value;
+                // Enabling NMI during vblank fires one immediately.
+                if !was_enabled && value & CTRL_NMI_ENABLE != 0 && self.vblank {
+                    self.nmi_pending = true;
+                }
+            }
             0x2006 => {
                 if self.w {
                     self.v = (self.v & 0xFF00) | u16::from(value);
