@@ -815,3 +815,225 @@ fn oam_address_wraps_after_ff() {
     assert_eq!(ppu.oam[0xFF], 0x11);
     assert_eq!(ppu.oam[0x00], 0x22);
 }
+
+// Sprite rendering
+
+fn set_sprite_palettes(ppu: &mut Ppu, mapper: &mut TestMapper) {
+    for palette in 0..4u16 {
+        for color in 1..4u16 {
+            // Sprite palette p, color c → value $p(c+4), distinct from background values.
+            ppu.write(
+                0x3F10 + palette * 4 + color,
+                0x10 * palette as u8 + 4 + color as u8,
+                mapper,
+            );
+        }
+    }
+}
+
+fn enable_sprites(ppu: &mut Ppu, mapper: &mut TestMapper) {
+    ppu.write_register(0x2001, ppu.mask | 0b0001_0000, mapper);
+}
+
+fn set_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attributes: u8, x: u8) {
+    ppu.oam[index * 4..index * 4 + 4].copy_from_slice(&[y, tile, attributes, x]);
+}
+
+// Sprite tests use tile 1 (see `mapper_with_test_tile`) and start with every
+// sprite parked off-screen at Y = $FF.
+fn sprite_ppu() -> (Ppu, TestMapper) {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    ppu.oam = [0xFF; 0x100];
+    set_palettes(&mut ppu, &mut mapper);
+    set_sprite_palettes(&mut ppu, &mut mapper);
+    enable_sprites(&mut ppu, &mut mapper);
+    (ppu, mapper)
+}
+
+#[test]
+fn sprite_is_drawn_one_scanline_below_its_y() {
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 10, 0x01, 0, 20);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 21, 10), 0x0F, "row Y itself is empty");
+    assert_eq!(pixel(&ppu, 21, 11), 0x05);
+    assert_eq!(pixel(&ppu, 21, 18), 0x07, "last row");
+    assert_eq!(pixel(&ppu, 21, 19), 0x0F);
+}
+
+#[test]
+fn sprite_uses_its_palette() {
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 10, 0x01, 0b0000_0010, 20);
+
+    render(&mut ppu, &mapper);
+    let row: Vec<u8> = (20..28).map(|x| pixel(&ppu, x, 11)).collect();
+    assert_eq!(row, [0x0F, 0x25, 0x26, 0x27, 0x0F, 0x25, 0x26, 0x27]);
+}
+
+#[test]
+fn sprite_color_zero_is_transparent() {
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.write(0x2000 + 32 + 2, 0x01, &mut mapper); // background tile 1 at (16, 8)
+    enable_background(&mut ppu, &mut mapper);
+    ppu.write_register(0x2001, 0b0001_1000, &mut mapper);
+    set_sprite(&mut ppu, 0, 7, 0x01, 0, 16);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 16, 8), 0x0F, "both transparent: backdrop");
+    assert_eq!(pixel(&ppu, 17, 8), 0x05, "sprite over background");
+}
+
+#[test]
+fn sprite_flips_horizontally() {
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 10, 0x01, 0b0100_0000, 20);
+
+    render(&mut ppu, &mapper);
+    let row: Vec<u8> = (20..28).map(|x| pixel(&ppu, x, 11)).collect();
+    assert_eq!(row, [0x07, 0x06, 0x05, 0x0F, 0x07, 0x06, 0x05, 0x0F]);
+}
+
+#[test]
+fn sprite_flips_vertically() {
+    // Tile row 0 (the mixed row) moves to the bottom.
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 10, 0x01, 0b1000_0000, 20);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 20, 11), 0x07);
+    assert_eq!(pixel(&ppu, 20, 18), 0x0F);
+    assert_eq!(pixel(&ppu, 21, 18), 0x05);
+}
+
+#[test]
+fn sprite_behind_background_shows_only_through_transparent_pixels() {
+    // Background tile 1 at (16, 8); sprite tile 1 behind it, shifted one pixel right.
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.write(0x2000 + 32 + 2, 0x01, &mut mapper);
+    ppu.write_register(0x2001, 0b0001_1000, &mut mapper);
+    set_sprite(&mut ppu, 0, 7, 0x01, 0b0010_0000, 17);
+
+    render(&mut ppu, &mapper);
+    // Background row: 0,1,2,3,0,... from x=16. Sprite row: 0,1,2,3,0,... from x=17.
+    assert_eq!(
+        pixel(&ppu, 18, 8),
+        0x02,
+        "background opaque: background wins"
+    );
+    assert_eq!(
+        pixel(&ppu, 20, 8),
+        0x07,
+        "background transparent: sprite shows"
+    );
+}
+
+#[test]
+fn lower_oam_index_wins_overlap() {
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 10, 0x01, 0b0000_0001, 20);
+    set_sprite(&mut ppu, 1, 10, 0x01, 0b0000_0010, 20);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 21, 11), 0x15);
+}
+
+#[test]
+fn higher_index_sprite_shows_through_lower_index_transparent_pixels() {
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 10, 0x01, 0b0000_0001, 20);
+    set_sprite(&mut ppu, 1, 10, 0x01, 0b0000_0010, 19);
+
+    render(&mut ppu, &mapper);
+    // Pixel 20 is transparent in sprite 0 but color 1 in sprite 1.
+    assert_eq!(pixel(&ppu, 20, 11), 0x25);
+}
+
+#[test]
+fn front_sprite_behind_background_still_hides_later_sprites() {
+    // Hardware quirk: sprite 0 claims the pixel, then its priority hides it behind
+    // the background, so sprite 1 (in front) never gets drawn there.
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.write(0x2000 + 32 + 2, 0x01, &mut mapper);
+    ppu.write_register(0x2001, 0b0001_1000, &mut mapper);
+    set_sprite(&mut ppu, 0, 7, 0x01, 0b0010_0000, 16);
+    set_sprite(&mut ppu, 1, 7, 0x01, 0b0000_0010, 16);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 17, 8), 0x01);
+}
+
+#[test]
+fn ctrl_bit_3_selects_sprite_pattern_table() {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0x1000);
+    ppu.oam = [0xFF; 0x100];
+    set_sprite_palettes(&mut ppu, &mut mapper);
+    enable_sprites(&mut ppu, &mut mapper);
+    set_sprite(&mut ppu, 0, 10, 0x01, 0, 20);
+    ppu.write_register(0x2000, 0b0000_1000, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 21, 11), 0x05);
+}
+
+#[test]
+fn sprite_8x16_uses_two_tiles_and_tile_bit_0_for_table() {
+    // Tile $03 in 8x16 mode: table $1000, tiles $02 (top) and $03 (bottom).
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    mapper.chr[0x1000 + 0x02 * 16] = 0xFF; // top tile row 0: color 1
+    mapper.chr[0x1000 + 0x03 * 16 + 8] = 0xFF; // bottom tile row 0: color 2
+    ppu.oam = [0xFF; 0x100];
+    set_sprite_palettes(&mut ppu, &mut mapper);
+    enable_sprites(&mut ppu, &mut mapper);
+    ppu.write_register(0x2000, 0b0010_0000, &mut mapper);
+    set_sprite(&mut ppu, 0, 10, 0x03, 0, 20);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 20, 11), 0x05);
+    assert_eq!(pixel(&ppu, 20, 19), 0x06);
+}
+
+#[test]
+fn sprite_8x16_vertical_flip_swaps_tiles() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    mapper.chr[0x02 * 16] = 0xFF;
+    mapper.chr[0x03 * 16 + 8] = 0xFF;
+    ppu.oam = [0xFF; 0x100];
+    set_sprite_palettes(&mut ppu, &mut mapper);
+    enable_sprites(&mut ppu, &mut mapper);
+    ppu.write_register(0x2000, 0b0010_0000, &mut mapper);
+    set_sprite(&mut ppu, 0, 10, 0x02, 0b1000_0000, 20);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(
+        pixel(&ppu, 20, 26),
+        0x05,
+        "top tile row 0 is now the last row"
+    );
+    assert_eq!(pixel(&ppu, 20, 18), 0x06, "bottom tile row 0 is now row 7");
+}
+
+#[test]
+fn sprites_disabled_are_not_drawn() {
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.write_register(0x2001, 0, &mut mapper);
+    set_sprite(&mut ppu, 0, 10, 0x01, 0, 20);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 21, 11), 0x0F);
+}
+
+#[test]
+fn sprite_is_clipped_at_right_and_bottom_edges() {
+    let (mut ppu, mapper) = sprite_ppu();
+    set_sprite(&mut ppu, 0, 235, 0x01, 0, 252);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 253, 236), 0x05);
+    assert_eq!(pixel(&ppu, 255, 239), 0x07);
+}
