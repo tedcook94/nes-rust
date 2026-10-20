@@ -79,7 +79,7 @@ fn ram_does_not_extend_past_mirrors() {
 
 // One address from the start, middle and end of each non-RAM range.
 const STUBBED_ADDRESSES: [u16; 7] = [
-    0x4000, 0x4014, 0x4017, // APU and I/O
+    0x4000, 0x4014, 0x4017, // APU and controller 2
     0x4018, 0x401F, // unused test-mode registers
     0x4020, 0x6000, // cartridge space below PRG (NROM has nothing here)
 ];
@@ -294,4 +294,24 @@ fn oam_dma_does_not_write_ram() {
     bus.write(0x4014, 0x02);
     assert_eq!(bus.read(0x0014), 0x00);
     assert_eq!(bus.read(0x0002), 0x00);
+}
+
+// Controller
+
+#[test]
+fn controller_is_read_through_4016() {
+    let mut bus = create_bus();
+    bus.set_buttons(crate::controller::button::A);
+
+    bus.write(0x4016, 1);
+    bus.write(0x4016, 0);
+    assert_eq!(bus.read(0x4016) & 1, 1);
+    assert_eq!(bus.read(0x4016) & 1, 0);
+}
+
+#[test]
+fn controller_read_sets_open_bus_bits() {
+    let mut bus = create_bus();
+
+    assert_eq!(bus.read(0x4016), 0x40);
 }

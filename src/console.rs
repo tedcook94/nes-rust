@@ -35,6 +35,10 @@ impl Console {
         cycles
     }
 
+    pub fn set_buttons(&mut self, buttons: u8) {
+        self.bus.set_buttons(buttons);
+    }
+
     pub fn step_frame(&mut self) {
         loop {
             self.step();

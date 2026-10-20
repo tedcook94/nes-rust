@@ -1,4 +1,5 @@
 use crate::cartridge::Mapper;
+use crate::controller::Controller;
 use crate::ppu::Ppu;
 
 pub trait Bus {
@@ -11,6 +12,7 @@ pub struct CpuBus {
     ppu: Ppu,
     mapper: Box<dyn Mapper>,
     dma_pending: bool,
+    controller: Controller,
 }
 
 impl CpuBus {
@@ -20,6 +22,7 @@ impl CpuBus {
             ppu: Ppu::new(),
             mapper,
             dma_pending: false,
+            controller: Controller::new(),
         }
     }
 
@@ -32,6 +35,10 @@ impl CpuBus {
             self.ppu.tick(&*self.mapper);
         }
         self.ppu.take_nmi()
+    }
+
+    pub fn set_buttons(&mut self, buttons: u8) {
+        self.controller.set_buttons(buttons);
     }
 
     pub fn take_frame_ready(&mut self) -> bool {
@@ -48,7 +55,9 @@ impl Bus for CpuBus {
         match address {
             0x0000..=0x1FFF => self.ram[to_ram_address(address)],
             0x2000..=0x3FFF => self.ppu.read_register(ppu_register(address), &*self.mapper),
-            0x4000..=0x4017 => 0, // reserved for APU and I/O
+            // Upper bits come from the data bus; $40 is what most games see.
+            0x4016 => 0x40 | self.controller.read(),
+            0x4000..=0x4017 => 0, // reserved for APU and controller 2
             0x4018..=0x401F => 0, // unused test registers
             0x4020..=0xFFFF => self.mapper.cpu_read(address),
         }
@@ -62,7 +71,8 @@ impl Bus for CpuBus {
                     .write_register(ppu_register(address), byte, &mut *self.mapper)
             }
             0x4014 => self.oam_dma(byte),
-            0x4000..=0x4017 => (), // reserved for APU and I/O
+            0x4016 => self.controller.write(byte),
+            0x4000..=0x4017 => (), // reserved for APU
             0x4018..=0x401F => (), // unused test registers
             0x4020..=0xFFFF => self.mapper.cpu_write(address, byte),
         }
