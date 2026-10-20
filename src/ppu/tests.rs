@@ -256,7 +256,9 @@ fn ppuaddr_third_write_starts_over_at_high_byte() {
 
     set_address(&mut ppu, &mut mapper, 0x2108);
     ppu.write_register(0x2006, 0x3F, &mut mapper);
-    assert_eq!(ppu.v, 0x3F08, "v = {:#06X}", ppu.v);
+    assert_eq!(ppu.v, 0x2108, "v only updates on the second write");
+    ppu.write_register(0x2006, 0x00, &mut mapper);
+    assert_eq!(ppu.v, 0x3F00, "v = {:#06X}", ppu.v);
 }
 
 #[test]
@@ -568,6 +570,12 @@ fn render(ppu: &mut Ppu, mapper: &TestMapper) {
     tick_to_with(ppu, mapper, 241, 2);
 }
 
+fn render_second_frame(ppu: &mut Ppu, mapper: &TestMapper) {
+    render(ppu, mapper);
+    tick_to_with(ppu, mapper, 0, 0);
+    render(ppu, mapper);
+}
+
 fn tick_to_with(ppu: &mut Ppu, mapper: &TestMapper, scanline: u16, dot: u16) {
     while (ppu.scanline, ppu.dot) != (scanline, dot) {
         ppu.tick(mapper);
@@ -729,7 +737,8 @@ fn ctrl_bits_0_and_1_select_nametable() {
     enable_background(&mut ppu, &mut mapper);
     ppu.write_register(0x2000, 0b0000_0001, &mut mapper);
 
-    render(&mut ppu, &mapper);
+    // The nametable bits reach v on the pre-render line, so they apply from the next frame.
+    render_second_frame(&mut ppu, &mapper);
     assert_eq!(pixel(&ppu, 1, 0), 0x01);
 }
 
@@ -1171,4 +1180,264 @@ fn no_sprite_zero_hit_at_x_255() {
 
     render(&mut ppu, &mapper);
     assert!(!read_hit(&mut ppu));
+}
+
+// Scroll registers
+
+#[test]
+fn ppuctrl_sets_nametable_bits_of_t() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2000, 0b0000_0011, &mut mapper);
+    assert_eq!(ppu.t, 0x0C00, "t = {:#06X}", ppu.t);
+}
+
+#[test]
+fn ppuscroll_first_write_sets_coarse_and_fine_x() {
+    // $7D = 01111_101: coarse X 15, fine X 5.
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2005, 0x7D, &mut mapper);
+    assert_eq!(ppu.t, 0x000F, "t = {:#06X}", ppu.t);
+    assert_eq!(ppu.fine_x, 5);
+}
+
+#[test]
+fn ppuscroll_second_write_sets_coarse_and_fine_y() {
+    // $5E = 01011_110: coarse Y 11, fine Y 6.
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2005, 0x00, &mut mapper);
+    ppu.write_register(0x2005, 0x5E, &mut mapper);
+    assert_eq!(ppu.t, 0x6160, "t = {:#06X}", ppu.t);
+}
+
+#[test]
+fn ppuscroll_and_ppuaddr_share_the_write_toggle() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2005, 0x08, &mut mapper);
+    ppu.write_register(0x2006, 0x34, &mut mapper); // second write: low byte
+    assert_eq!(ppu.t & 0x00FF, 0x34);
+    assert!(!ppu.w);
+}
+
+#[test]
+fn ppuscroll_does_not_change_v() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    set_address(&mut ppu, &mut mapper, 0x2108);
+    ppu.write_register(0x2005, 0xFF, &mut mapper);
+    ppu.write_register(0x2005, 0xFF, &mut mapper);
+    assert_eq!(ppu.v, 0x2108);
+}
+
+#[test]
+fn ppuaddr_second_write_copies_t_to_v() {
+    // A mid-frame $2006 write pair is how some games jump the scroll.
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+
+    ppu.write_register(0x2000, 0b0000_0010, &mut mapper);
+    ppu.write_register(0x2006, 0x04, &mut mapper);
+    assert_eq!(
+        ppu.t & 0x0C00,
+        0x0400,
+        "high byte replaces the nametable bits"
+    );
+    ppu.write_register(0x2006, 0x56, &mut mapper);
+    assert_eq!(ppu.v, 0x0456);
+}
+
+// v during rendering
+
+#[test]
+fn increment_y_steps_fine_y_then_coarse_y() {
+    let mut ppu = Ppu::new();
+
+    ppu.v = 0x6000; // fine Y 6
+    ppu.increment_y();
+    assert_eq!(ppu.v, 0x7000);
+    ppu.increment_y();
+    assert_eq!(ppu.v, 0x0020, "fine Y wraps, coarse Y + 1");
+}
+
+#[test]
+fn increment_y_wraps_row_29_into_next_nametable() {
+    let mut ppu = Ppu::new();
+
+    ppu.v = 0x7000 | (29 << 5);
+    ppu.increment_y();
+    assert_eq!(ppu.v, 0x0800, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn increment_y_wraps_row_31_without_switching_nametable() {
+    let mut ppu = Ppu::new();
+
+    ppu.v = 0x7000 | (31 << 5);
+    ppu.increment_y();
+    assert_eq!(ppu.v, 0x0000, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn horizontal_bits_reload_from_t_at_dot_257() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    enable_background(&mut ppu, &mut mapper);
+
+    tick_to_with(&mut ppu, &mapper, 5, 257);
+    ppu.t = 0x041F;
+    ppu.v = 0x0000;
+    ppu.tick(&mapper);
+    assert_eq!(ppu.v, 0x041F, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn vertical_bits_reload_from_t_on_pre_render_line() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    enable_background(&mut ppu, &mut mapper);
+
+    tick_to_with(&mut ppu, &mapper, 261, 279);
+    ppu.t = 0x7BE0;
+    ppu.v = 0x0000;
+    tick_to_with(&mut ppu, &mapper, 261, 305);
+    assert_eq!(ppu.v, 0x7BE0, "v = {:#06X}", ppu.v);
+}
+
+#[test]
+fn v_is_not_touched_while_rendering_is_disabled() {
+    let mut ppu = Ppu::new();
+    let mapper = TestMapper::new(Mirroring::Horizontal);
+    ppu.v = 0x2108;
+    ppu.t = 0x7FFF;
+
+    tick_to_with(&mut ppu, &mapper, 261, 340);
+    assert_eq!(ppu.v, 0x2108);
+}
+
+// Scrolled output
+
+fn set_scroll(ppu: &mut Ppu, mapper: &mut TestMapper, x: u8, y: u8) {
+    ppu.write_register(0x2005, x, mapper);
+    ppu.write_register(0x2005, y, mapper);
+}
+
+#[test]
+fn fine_x_scroll_shifts_pixels_left() {
+    // Tile 1 row 0 is 0,1,2,3,0,1,2,3. Scrolling 3 pixels starts at color 3.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    set_scroll(&mut ppu, &mut mapper, 3, 0);
+
+    render_second_frame(&mut ppu, &mapper);
+    let row: Vec<u8> = (0..5).map(|x| pixel(&ppu, x, 0)).collect();
+    assert_eq!(row, [0x03, 0x0F, 0x01, 0x02, 0x03]);
+    assert_eq!(pixel(&ppu, 5, 0), 0x0F, "tile 1 ended");
+}
+
+#[test]
+fn coarse_x_scroll_moves_tiles_left() {
+    // Tile at column 5 appears at column 3 with a 16-pixel scroll.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2005, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    set_scroll(&mut ppu, &mut mapper, 16, 0);
+
+    render_second_frame(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 25, 0), 0x01);
+}
+
+#[test]
+fn x_scroll_continues_into_next_nametable() {
+    // Vertical mirroring: $2400 is the table to the right. Scrolling 8 pixels
+    // brings its first tile into the last column.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    mapper.mirroring = Mirroring::Vertical;
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2400, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    set_scroll(&mut ppu, &mut mapper, 8, 0);
+
+    render_second_frame(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 249, 0), 0x01);
+}
+
+#[test]
+fn fine_x_scroll_reveals_part_of_tile_33() {
+    // With fine X 4, the last 4 screen pixels come from the 33rd tile.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    mapper.mirroring = Mirroring::Vertical;
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2400, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    set_scroll(&mut ppu, &mut mapper, 4, 0);
+
+    render_second_frame(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 253, 0), 0x01);
+}
+
+#[test]
+fn y_scroll_moves_rows_up() {
+    // Scrolling down 10 pixels: tile row 1, pixel row 2 lands on screen line 0.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2020, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    set_scroll(&mut ppu, &mut mapper, 0, 10);
+
+    render_second_frame(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 0, 0), 0x03, "tile row 2 is all color 3");
+    assert_eq!(pixel(&ppu, 0, 6), 0x0F, "tile ended");
+}
+
+#[test]
+fn scrolled_attributes_follow_the_tile() {
+    // Tile at column 4 uses attribute byte $23C1; with a 16-pixel scroll it's drawn
+    // at column 2 but must keep palette 3.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2004, 0x01, &mut mapper);
+    ppu.write(0x23C1, 0b0000_0011, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+    set_scroll(&mut ppu, &mut mapper, 16, 0);
+
+    render_second_frame(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 17, 0), 0x31);
+}
+
+#[test]
+fn mid_frame_scroll_change_splits_the_screen() {
+    // SMB1's pattern: status bar unscrolled, then a new X scroll after sprite-0 hit.
+    // Lines 24 and 32 are both pixel row 0 of a tile (0,1,2,3,...).
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    for row in 0..30 {
+        ppu.write(0x2000 + row * 32, 0x01, &mut mapper);
+    }
+    enable_background(&mut ppu, &mut mapper);
+    render_second_frame(&mut ppu, &mapper);
+
+    tick_to_with(&mut ppu, &mapper, 0, 0);
+    tick_to_with(&mut ppu, &mapper, 32, 0);
+    set_scroll(&mut ppu, &mut mapper, 2, 0);
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 1, 24), 0x01, "above the split: unscrolled");
+    assert_eq!(pixel(&ppu, 1, 32), 0x03, "below the split: scrolled by 2");
 }

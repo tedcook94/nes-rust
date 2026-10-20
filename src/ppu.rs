@@ -11,7 +11,13 @@ pub struct Ppu {
     mask: u8,
     oam: [u8; 0x100],
     oam_address: u8,
+    /// Current VRAM address. While rendering, its bits hold the scroll position:
+    /// `yyy NN YYYYY XXXXX` (fine Y, nametable, coarse Y, coarse X).
     v: u16,
+    /// Scroll and address writes land here first, then get copied into `v`.
+    t: u16,
+    /// Fine X scroll, 0-7.
+    fine_x: u8,
     w: bool,
     read_buffer: u8,
     vblank: bool,
@@ -39,6 +45,15 @@ const CTRL_NMI_ENABLE: u8 = 0b1000_0000;
 const STATUS_SPRITE_ZERO_HIT: u8 = 0b0100_0000;
 const STATUS_VBLANK: u8 = 0b1000_0000;
 
+// Bit groups within `v` and `t`.
+const COARSE_X: u16 = 0x001F;
+const COARSE_Y: u16 = 0x03E0;
+const NAMETABLE_X: u16 = 0x0400;
+const NAMETABLE_Y: u16 = 0x0800;
+const FINE_Y: u16 = 0x7000;
+const HORIZONTAL_BITS: u16 = NAMETABLE_X | COARSE_X;
+const VERTICAL_BITS: u16 = FINE_Y | NAMETABLE_Y | COARSE_Y;
+
 const DOTS_PER_SCANLINE: u16 = 341;
 const SCANLINES_PER_FRAME: u16 = 262;
 const VBLANK_SCANLINE: u16 = 241;
@@ -54,6 +69,8 @@ impl Ppu {
             oam: [0; 0x100],
             oam_address: 0,
             v: 0,
+            t: 0,
+            fine_x: 0,
             w: false,
             read_buffer: 0,
             vblank: false,
@@ -84,10 +101,21 @@ impl Ppu {
                 _ => {}
             }
         }
+        let visible = usize::from(self.scanline) < HEIGHT;
         // Each visible line is drawn in one go once its pixels would have been output,
         // so register writes between lines (such as scroll splits) take effect.
-        if self.dot == 256 && usize::from(self.scanline) < HEIGHT {
+        if self.dot == 256 && visible {
             self.render_scanline(self.scanline, mapper);
+        }
+        if self.rendering_enabled() && (visible || self.scanline == PRE_RENDER_SCANLINE) {
+            match self.dot {
+                256 => self.increment_y(),
+                257 => self.v = (self.v & !HORIZONTAL_BITS) | (self.t & HORIZONTAL_BITS),
+                280..=304 if self.scanline == PRE_RENDER_SCANLINE => {
+                    self.v = (self.v & !VERTICAL_BITS) | (self.t & VERTICAL_BITS);
+                }
+                _ => {}
+            }
         }
 
         self.dot += 1;
@@ -95,6 +123,30 @@ impl Ppu {
             self.dot = 0;
             self.scanline = (self.scanline + 1) % SCANLINES_PER_FRAME;
         }
+    }
+
+    fn rendering_enabled(&self) -> bool {
+        self.mask & (MASK_SHOW_BACKGROUND | MASK_SHOW_SPRITES) != 0
+    }
+
+    /// Moves `v` down one pixel row, wrapping into the next nametable after row 29.
+    fn increment_y(&mut self) {
+        if self.v & FINE_Y != FINE_Y {
+            self.v += 0x1000;
+            return;
+        }
+        self.v &= !FINE_Y;
+        let coarse_y = (self.v & COARSE_Y) >> 5;
+        let coarse_y = match coarse_y {
+            29 => {
+                self.v ^= NAMETABLE_Y;
+                0
+            }
+            // Rows 30-31 hold attributes; scrolling into them wraps without switching tables.
+            31 => 0,
+            _ => coarse_y + 1,
+        };
+        self.v = (self.v & !COARSE_Y) | (coarse_y << 5);
     }
 
     pub fn take_frame_ready(&mut self) -> bool {
@@ -121,29 +173,48 @@ impl Ppu {
             return opaque;
         }
 
-        let nametable = 0x2000 + u16::from(self.ctrl & CTRL_NAMETABLE) * 0x400;
         let pattern_table = if self.ctrl & CTRL_BACKGROUND_TABLE != 0 {
             0x1000
         } else {
             0
         };
-        let row = y / 8;
-        for column in 0..32u16 {
-            let tile = u16::from(self.read(nametable + row * 32 + column, mapper));
-            let attribute = self.read(nametable + 0x3C0 + (row / 4) * 8 + column / 4, mapper);
+        let fine_y = (self.v & FINE_Y) >> 12;
+        // 33 tiles cover 256 pixels at any fine X offset.
+        let mut line = [0u8; WIDTH + 8];
+        let mut line_opaque = [false; WIDTH + 8];
+        let mut v = self.v;
+        for column in 0..33 {
+            let tile = u16::from(self.read(0x2000 | (v & 0x0FFF), mapper));
+            let attribute_address =
+                0x23C0 | (v & (NAMETABLE_X | NAMETABLE_Y)) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+            let attribute = self.read(attribute_address, mapper);
             // Each attribute byte covers 4x4 tiles as four 2x2 quadrants.
-            let shift = (row % 4) / 2 * 4 + (column % 4) / 2 * 2;
+            let shift = ((v >> 4) & 0x04) | (v & 0x02);
             let palette = u16::from((attribute >> shift) & 0x03);
 
-            let address = pattern_table + tile * 16 + y % 8;
+            let address = pattern_table + tile * 16 + fine_y;
             let colors = decode_row(self.read(address, mapper), self.read(address + 8, mapper));
             for (offset, &color) in colors.iter().enumerate() {
                 if color == 0 {
                     continue;
                 }
-                let x = usize::from(column * 8) + offset;
-                self.frame[usize::from(y) * WIDTH + x] =
-                    self.read(0x3F00 + palette * 4 + u16::from(color), mapper) & 0x3F;
+                let x = column * 8 + offset;
+                line[x] = self.read(0x3F00 + palette * 4 + u16::from(color), mapper) & 0x3F;
+                line_opaque[x] = true;
+            }
+
+            v = if v & COARSE_X == COARSE_X {
+                (v & !COARSE_X) ^ NAMETABLE_X
+            } else {
+                v + 1
+            };
+        }
+
+        let start = usize::from(self.fine_x);
+        let row = usize::from(y) * WIDTH;
+        for x in 0..WIDTH {
+            if line_opaque[start + x] {
+                self.frame[row + x] = line[start + x];
                 opaque[x] = true;
             }
         }
@@ -269,6 +340,8 @@ impl Ppu {
             0x2000 => {
                 let was_enabled = self.ctrl & CTRL_NMI_ENABLE != 0;
                 self.ctrl = value;
+                self.t = (self.t & !(NAMETABLE_X | NAMETABLE_Y))
+                    | (u16::from(value & CTRL_NAMETABLE) << 10);
                 // Enabling NMI during vblank fires one immediately.
                 if !was_enabled && value & CTRL_NMI_ENABLE != 0 && self.vblank {
                     self.nmi_pending = true;
@@ -280,12 +353,24 @@ impl Ppu {
                 self.oam[usize::from(self.oam_address)] = value;
                 self.oam_address = self.oam_address.wrapping_add(1);
             }
+            0x2005 => {
+                if self.w {
+                    let coarse_y = u16::from(value >> 3) << 5;
+                    let fine_y = u16::from(value & 0x07) << 12;
+                    self.t = (self.t & !(COARSE_Y | FINE_Y)) | coarse_y | fine_y;
+                } else {
+                    self.t = (self.t & !COARSE_X) | u16::from(value >> 3);
+                    self.fine_x = value & 0x07;
+                }
+                self.w = !self.w;
+            }
             0x2006 => {
                 if self.w {
-                    self.v = (self.v & 0xFF00) | u16::from(value);
+                    self.t = (self.t & 0xFF00) | u16::from(value);
+                    self.v = self.t;
                 } else {
-                    // The PPU address bus is 14 bits.
-                    self.v = (u16::from(value & 0x3F) << 8) | (self.v & 0x00FF);
+                    // The top bit of t is cleared along with the two bits above 14-bit addresses.
+                    self.t = (u16::from(value & 0x3F) << 8) | (self.t & 0x00FF);
                 }
                 self.w = !self.w;
             }
