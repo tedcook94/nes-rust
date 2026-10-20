@@ -1037,3 +1037,138 @@ fn sprite_is_clipped_at_right_and_bottom_edges() {
     assert_eq!(pixel(&ppu, 253, 236), 0x05);
     assert_eq!(pixel(&ppu, 255, 239), 0x07);
 }
+
+// Per-scanline rendering
+
+#[test]
+fn line_is_drawn_at_dot_256() {
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    tick_to_with(&mut ppu, &mapper, 0, 256);
+    assert_eq!(pixel(&ppu, 1, 0), 0x00, "not drawn yet");
+    ppu.tick(&mapper);
+    assert_eq!(pixel(&ppu, 1, 0), 0x01);
+}
+
+#[test]
+fn register_change_between_lines_affects_later_lines_only() {
+    // Switching the background pattern table after line 3 changes lines 4+.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    enable_background(&mut ppu, &mut mapper);
+
+    tick_to_with(&mut ppu, &mapper, 4, 0);
+    ppu.write_register(0x2000, 0b0001_0000, &mut mapper);
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 0, 3), 0x03, "line 3 used table $0000");
+    assert_eq!(pixel(&ppu, 0, 4), 0x0F, "line 4 used the blank table $1000");
+}
+
+// Sprite-0 hit
+
+fn read_hit(ppu: &mut Ppu) -> bool {
+    read_status(ppu) & 0x40 != 0
+}
+
+// Background tile 1 at (16, 8) and sprite 0 (tile 1) at the same spot.
+fn sprite_zero_ppu() -> (Ppu, TestMapper) {
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.write(0x2000 + 32 + 2, 0x01, &mut mapper);
+    ppu.write_register(0x2001, 0b0001_1000, &mut mapper);
+    set_sprite(&mut ppu, 0, 7, 0x01, 0, 16);
+    (ppu, mapper)
+}
+
+#[test]
+fn sprite_zero_hit_when_opaque_pixels_overlap() {
+    let (mut ppu, mapper) = sprite_zero_ppu();
+
+    tick_to_with(&mut ppu, &mapper, 8, 257);
+    assert!(read_hit(&mut ppu));
+}
+
+#[test]
+fn sprite_zero_hit_is_set_on_the_overlapping_line() {
+    let (mut ppu, mapper) = sprite_zero_ppu();
+
+    tick_to_with(&mut ppu, &mapper, 7, 340);
+    assert!(!read_hit(&mut ppu), "line before the sprite");
+    tick_to_with(&mut ppu, &mapper, 8, 257);
+    assert!(read_hit(&mut ppu));
+}
+
+#[test]
+fn sprite_zero_hit_stays_set_until_pre_render() {
+    let (mut ppu, mapper) = sprite_zero_ppu();
+
+    tick_to_with(&mut ppu, &mapper, 250, 0);
+    assert!(read_hit(&mut ppu));
+    assert!(read_hit(&mut ppu), "a $2002 read doesn't clear it");
+    tick_to_with(&mut ppu, &mapper, 261, 2);
+    assert!(!read_hit(&mut ppu));
+}
+
+#[test]
+fn no_sprite_zero_hit_over_transparent_background() {
+    let (mut ppu, mut mapper) = sprite_zero_ppu();
+    ppu.write(0x2000 + 32 + 2, 0x00, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert!(!read_hit(&mut ppu));
+}
+
+#[test]
+fn no_sprite_zero_hit_from_other_sprites() {
+    let (mut ppu, mapper) = sprite_zero_ppu();
+    ppu.oam[0..4].copy_from_slice(&[0xFF; 4]);
+    set_sprite(&mut ppu, 1, 7, 0x01, 0, 16);
+
+    render(&mut ppu, &mapper);
+    assert!(!read_hit(&mut ppu));
+}
+
+#[test]
+fn sprite_zero_hit_counts_even_when_behind_background() {
+    let (mut ppu, mapper) = sprite_zero_ppu();
+    ppu.oam[2] = 0b0010_0000;
+
+    render(&mut ppu, &mapper);
+    assert!(read_hit(&mut ppu));
+}
+
+#[test]
+fn no_sprite_zero_hit_when_background_disabled() {
+    let (mut ppu, mut mapper) = sprite_zero_ppu();
+    ppu.write_register(0x2001, 0b0001_0000, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert!(!read_hit(&mut ppu));
+}
+
+#[test]
+fn no_sprite_zero_hit_when_sprites_disabled() {
+    let (mut ppu, mut mapper) = sprite_zero_ppu();
+    ppu.write_register(0x2001, 0b0000_1000, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert!(!read_hit(&mut ppu));
+}
+
+#[test]
+fn no_sprite_zero_hit_at_x_255() {
+    // Only one sprite pixel is on screen at x = 255, and it's opaque (flipped row 0
+    // starts with color 3). The background tile in column 31 is opaque there too.
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.write(0x2000 + 32 + 31, 0x01, &mut mapper);
+    ppu.write_register(0x2001, 0b0001_1000, &mut mapper);
+    set_sprite(&mut ppu, 0, 7, 0x01, 0b0100_0000, 255);
+
+    render(&mut ppu, &mapper);
+    assert!(!read_hit(&mut ppu));
+}
