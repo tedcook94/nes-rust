@@ -5,6 +5,8 @@ pub struct Cpu {
     status: Status,
     cycle_count: u64,
     nmi_pending: bool,
+    /// IRQ is level-triggered: it fires on every step while the line is held and I is clear.
+    irq_line: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,7 @@ impl Cpu {
             status: Status(Status::INTERRUPT_DISABLE | Status::UNUSED),
             cycle_count: 0,
             nmi_pending: false,
+            irq_line: false,
         }
     }
 
@@ -68,6 +71,11 @@ impl Cpu {
 
     pub fn trigger_nmi(&mut self) {
         self.nmi_pending = true;
+    }
+
+    /// Sets the IRQ line level. Devices hold it until the handler acknowledges them.
+    pub fn set_irq(&mut self, active: bool) {
+        self.irq_line = active;
     }
 
     /// Counts cycles where the CPU is halted, such as during OAM DMA.
@@ -95,6 +103,11 @@ impl Cpu {
         if self.nmi_pending {
             self.nmi_pending = false;
             let cycles = self.interrupt(bus, 0xFFFA, false);
+            self.cycle_count += u64::from(cycles);
+            return cycles;
+        }
+        if self.irq_line && !self.status.is_set(Status::INTERRUPT_DISABLE) {
+            let cycles = self.interrupt(bus, 0xFFFE, false);
             self.cycle_count += u64::from(cycles);
             return cycles;
         }

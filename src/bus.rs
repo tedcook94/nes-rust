@@ -54,6 +54,11 @@ impl CpuBus {
         self.apu.take_samples()
     }
 
+    /// No device drives IRQ yet; the MMC3 mapper will.
+    pub fn irq_line(&self) -> bool {
+        false
+    }
+
     pub fn set_buttons(&mut self, buttons: u8) {
         self.controller.set_buttons(buttons);
     }

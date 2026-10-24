@@ -33,6 +33,7 @@ impl Console {
         if self.bus.tick_ppu(cycles) {
             self.cpu.trigger_nmi();
         }
+        self.cpu.set_irq(self.bus.irq_line());
         cycles
     }
 

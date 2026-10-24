@@ -5738,3 +5738,81 @@ fn state_formats_with_zero_padding() {
 
     assert_eq!(state.to_string(), "0001 A:00 X:01 Y:0A P:04 SP:00 CYC:0");
 }
+
+// IRQ
+
+fn create_irq_test(program: &[u8]) -> (Cpu, TestBus) {
+    let (mut cpu, mut bus) = create_nmi_test(program);
+    bus.0[0xFFFE] = 0x00; // IRQ vector → $3000
+    bus.0[0xFFFF] = 0x30;
+    cpu.status = Status(Status::UNUSED);
+    (cpu, bus)
+}
+
+#[test]
+fn irq_jumps_to_irq_vector() {
+    let (mut cpu, mut bus) = create_irq_test(&[0xA9, 0x42]);
+
+    cpu.set_irq(true);
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x3000, "PC = {:#06X}", cpu.registers.pc);
+    assert_eq!(cycles, 7);
+    assert_eq!(cpu.cycle_count, 7);
+}
+
+#[test]
+fn irq_pushes_pc_and_status_with_break_clear() {
+    let (mut cpu, mut bus) = create_irq_test(&[0xEA]);
+    cpu.status = Status(0xC3);
+
+    cpu.set_irq(true);
+    cpu.step(&mut bus);
+    assert_eq!(bus.0[0x01FD], 0x80);
+    assert_eq!(bus.0[0x01FC], 0x00);
+    assert_eq!(bus.0[0x01FB], 0xE3, "$01FB = {:#010b}", bus.0[0x01FB]);
+    assert!(cpu.status.is_set(Status::INTERRUPT_DISABLE));
+}
+
+#[test]
+fn irq_is_masked_by_interrupt_disable() {
+    let (mut cpu, mut bus) = create_irq_test(&[0xA9, 0x42]);
+    cpu.status = Status(Status::UNUSED | Status::INTERRUPT_DISABLE);
+
+    cpu.set_irq(true);
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42, "ran LDA instead");
+}
+
+#[test]
+fn held_irq_fires_again_once_i_is_cleared() {
+    // Handler: CLI. With the line still held, the next step re-enters the handler.
+    let (mut cpu, mut bus) = create_irq_test(&[0xEA]);
+    bus.0[0x3000] = 0x58;
+
+    cpu.set_irq(true);
+    cpu.step(&mut bus);
+    cpu.step(&mut bus); // CLI
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x3000);
+    assert_eq!(cpu.registers.sp, 0xF7, "two interrupt frames on the stack");
+}
+
+#[test]
+fn released_irq_does_not_fire() {
+    let (mut cpu, mut bus) = create_irq_test(&[0xA9, 0x42]);
+
+    cpu.set_irq(true);
+    cpu.set_irq(false);
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.a, 0x42);
+}
+
+#[test]
+fn nmi_wins_over_irq() {
+    let (mut cpu, mut bus) = create_irq_test(&[0xEA]);
+
+    cpu.trigger_nmi();
+    cpu.set_irq(true);
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers.pc, 0x1234);
+}
