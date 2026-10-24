@@ -1,7 +1,16 @@
 mod envelope;
+mod noise;
 mod pulse;
+mod triangle;
 
+use noise::Noise;
 use pulse::Pulse;
+use triangle::Triangle;
+
+const LENGTH_TABLE: [u8; 32] = [
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, //
+    12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+];
 
 // Frame counter steps, in CPU cycles since the sequence started.
 const STEP_1: u32 = 7457;
@@ -13,6 +22,8 @@ const FIVE_STEP_END: u32 = 37281;
 pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
+    triangle: Triangle,
+    noise: Noise,
     /// Pulse timers run at half the CPU rate, so they only clock on every other cycle.
     odd_cycle: bool,
     frame_cycle: u32,
@@ -24,6 +35,8 @@ impl Apu {
         Apu {
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),
+            triangle: Triangle::new(),
+            noise: Noise::new(),
             odd_cycle: false,
             frame_cycle: 0,
             five_step: false,
@@ -37,6 +50,8 @@ impl Apu {
             self.pulse2.clock_timer();
         }
         self.odd_cycle = !self.odd_cycle;
+        self.triangle.clock_timer();
+        self.noise.clock_timer();
         self.clock_frame_counter();
     }
 
@@ -66,11 +81,15 @@ impl Apu {
     fn quarter_frame(&mut self) {
         self.pulse1.envelope.clock();
         self.pulse2.envelope.clock();
+        self.noise.envelope.clock();
+        self.triangle.clock_linear();
     }
 
     fn half_frame(&mut self) {
         self.pulse1.clock_length();
         self.pulse2.clock_length();
+        self.triangle.clock_length();
+        self.noise.clock_length();
         self.pulse1.clock_sweep();
         self.pulse2.clock_sweep();
     }
@@ -79,6 +98,8 @@ impl Apu {
         match address {
             0x4000..=0x4003 => self.pulse1.write(address - 0x4000, value),
             0x4004..=0x4007 => self.pulse2.write(address - 0x4004, value),
+            0x4008..=0x400B => self.triangle.write(address - 0x4008, value),
+            0x400C..=0x400F => self.noise.write(address - 0x400C, value),
             0x4017 => {
                 // Bit 6 inhibits the frame IRQ; IRQs arrive with milestone 8.
                 self.five_step = value & 0x80 != 0;

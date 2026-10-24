@@ -2,7 +2,6 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 use super::*;
-use pulse::LENGTH_TABLE;
 
 /// Sets pulse 1 to the given duty, constant volume 15, timer period 8, and a long note.
 fn playing_pulse(apu: &mut Apu, duty: u8) {
@@ -360,4 +359,196 @@ fn writing_4017_resets_the_sequence() {
     apu.write_register(0x4017, 0x00);
     tick_n(&mut apu, 10);
     assert_eq!(apu.pulse1.length, 254);
+}
+
+// Triangle
+
+/// Long note, linear counter 127, timer period 4.
+fn playing_triangle(apu: &mut Apu) {
+    apu.write_register(0x4008, 0x7F);
+    apu.write_register(0x400A, 0x04);
+    apu.write_register(0x400B, 0x08);
+    apu.triangle.clock_linear();
+}
+
+#[test]
+fn triangle_registers() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4008, 0b1_0010110);
+    apu.write_register(0x400A, 0xCD);
+    apu.write_register(0x400B, 0b00011_010);
+    let triangle = &apu.triangle;
+    assert!(triangle.control);
+    assert_eq!(triangle.linear_reload_value, 0x16);
+    assert_eq!(triangle.timer_period, 0x2CD);
+    assert_eq!(triangle.length, 2);
+    assert!(triangle.linear_reload);
+}
+
+#[test]
+fn triangle_steps_every_period_plus_one_cpu_cycles() {
+    let mut apu = Apu::new();
+    playing_triangle(&mut apu);
+    apu.tick();
+    assert_eq!(apu.triangle.step, 1);
+    tick_n(&mut apu, 4);
+    assert_eq!(apu.triangle.step, 1);
+    apu.tick();
+    assert_eq!(apu.triangle.step, 2);
+}
+
+#[test]
+fn triangle_sequence_ramps_down_then_up() {
+    let mut apu = Apu::new();
+    playing_triangle(&mut apu);
+    let wave: Vec<u8> = (0..32)
+        .map(|_| {
+            let level = apu.triangle.output();
+            tick_n(&mut apu, 5);
+            level
+        })
+        .collect();
+    assert_eq!(wave[..3], [15, 14, 13]);
+    assert_eq!(wave[14..18], [1, 0, 0, 1]);
+    assert_eq!(wave[31], 15);
+    assert_eq!(apu.triangle.output(), 15, "wrapped around");
+}
+
+#[test]
+fn triangle_freezes_when_linear_or_length_is_zero() {
+    let mut apu = Apu::new();
+    playing_triangle(&mut apu);
+    apu.triangle.linear = 0;
+    tick_n(&mut apu, 20);
+    assert_eq!(apu.triangle.step, 0);
+
+    playing_triangle(&mut apu);
+    apu.triangle.length = 0;
+    tick_n(&mut apu, 20);
+    assert_eq!(apu.triangle.step, 0);
+}
+
+#[test]
+fn linear_counter_reloads_then_counts_down() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4008, 0x03);
+    apu.write_register(0x400B, 0x08);
+    apu.triangle.clock_linear();
+    assert_eq!(apu.triangle.linear, 3);
+    assert!(!apu.triangle.linear_reload, "cleared when control is off");
+    apu.triangle.clock_linear();
+    assert_eq!(apu.triangle.linear, 2);
+    for _ in 0..5 {
+        apu.triangle.clock_linear();
+    }
+    assert_eq!(apu.triangle.linear, 0);
+}
+
+#[test]
+fn control_flag_keeps_reloading_and_halts_length() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4008, 0x83);
+    apu.write_register(0x400B, 0x08);
+    apu.triangle.clock_linear();
+    apu.triangle.clock_linear();
+    assert_eq!(apu.triangle.linear, 3);
+    apu.triangle.clock_length();
+    assert_eq!(apu.triangle.length, 254);
+}
+
+#[test]
+fn frame_counter_clocks_triangle_counters() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4008, 0x05);
+    apu.write_register(0x400B, 0x08);
+    tick_n(&mut apu, STEP_2);
+    assert_eq!(apu.triangle.linear, 4);
+    assert_eq!(apu.triangle.length, 253);
+}
+
+// Noise
+
+#[test]
+fn noise_registers() {
+    let mut apu = Apu::new();
+    apu.write_register(0x400C, 0b00_1_1_0101);
+    apu.write_register(0x400E, 0x8A);
+    apu.write_register(0x400F, 0b00011_000);
+    let noise = &apu.noise;
+    assert!(noise.envelope.looping);
+    assert_eq!(noise.envelope.value, 5);
+    assert!(noise.short_mode);
+    assert_eq!(noise.timer_period, 380);
+    assert_eq!(noise.length, 2);
+    assert!(noise.envelope.start);
+}
+
+#[test]
+fn noise_shift_register_feedback() {
+    let mut apu = Apu::new();
+    apu.noise.shift = 0x0041;
+    apu.noise.clock_shift();
+    assert_eq!(apu.noise.shift, 0x4020, "long mode: bit 0 XOR bit 1");
+
+    apu.noise.shift = 0x0041;
+    apu.noise.short_mode = true;
+    apu.noise.clock_shift();
+    assert_eq!(apu.noise.shift, 0x0020, "short mode: bit 0 XOR bit 6");
+}
+
+fn sequence_length(apu: &mut Apu) -> u32 {
+    apu.noise.shift = 1;
+    let mut steps = 0;
+    loop {
+        apu.noise.clock_shift();
+        steps += 1;
+        if apu.noise.shift == 1 {
+            return steps;
+        }
+    }
+}
+
+#[test]
+fn noise_sequence_lengths() {
+    let mut apu = Apu::new();
+    assert_eq!(sequence_length(&mut apu), 32767);
+    apu.noise.short_mode = true;
+    assert_eq!(sequence_length(&mut apu), 93);
+}
+
+#[test]
+fn noise_shifts_every_period_cpu_cycles() {
+    let mut apu = Apu::new();
+    apu.write_register(0x400E, 0x01); // period 8
+    apu.tick();
+    let first = apu.noise.shift;
+    assert_ne!(first, 1);
+    tick_n(&mut apu, 7);
+    assert_eq!(apu.noise.shift, first);
+    apu.tick();
+    assert_ne!(apu.noise.shift, first);
+}
+
+#[test]
+fn noise_output_is_volume_when_bit_0_is_clear() {
+    let mut apu = Apu::new();
+    apu.write_register(0x400C, 0x19);
+    apu.write_register(0x400F, 0x08);
+    apu.noise.shift = 0x0002;
+    assert_eq!(apu.noise.output(), 9);
+    apu.noise.shift = 0x0003;
+    assert_eq!(apu.noise.output(), 0);
+    apu.noise.shift = 0x0002;
+    apu.noise.length = 0;
+    assert_eq!(apu.noise.output(), 0);
+}
+
+#[test]
+fn frame_counter_clocks_noise_envelope_and_length() {
+    let mut apu = Apu::new();
+    apu.write_register(0x400C, 0x00);
+    apu.write_register(0x400F, 0x08);
+    tick_n(&mut apu, STEP_2);
+    assert_eq!(apu.noise.envelope.decay, 14);
+    assert_eq!(apu.noise.length, 253);
 }
