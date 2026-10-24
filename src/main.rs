@@ -20,6 +20,11 @@ fn main() {
     let (_stream, sample_rate) = start_audio(Arc::clone(&queue));
     console.set_sample_rate(sample_rate);
     let mut filter = HighPass::default();
+    // The window runs at 60 fps but the NES at about 60.1, so samples slowly pile up.
+    // Capping the queue bounds the lag to about 3 frames.
+    let frame_samples = sample_rate as usize / 60;
+    let max_queued = frame_samples * 3;
+    let target_queued = frame_samples * 2;
 
     let options = WindowOptions {
         scale: Scale::X2,
@@ -50,10 +55,10 @@ fn main() {
         console.set_buttons(buttons);
         console.step_frame();
         let samples = console.take_samples();
-        queue
-            .lock()
-            .unwrap()
-            .extend(samples.into_iter().map(|s| filter.apply(s)));
+        let mut queued = queue.lock().unwrap();
+        queued.extend(samples.into_iter().map(|s| filter.apply(s)));
+        trim_queue(&mut queued, max_queued, target_queued);
+        drop(queued);
         for (pixel, &value) in buffer.iter_mut().zip(console.frame()) {
             *pixel = SYSTEM_PALETTE[usize::from(value)];
         }
@@ -93,6 +98,13 @@ fn start_audio(queue: Arc<Mutex<VecDeque<f32>>>) -> (cpal::Stream, u32) {
     (stream, sample_rate)
 }
 
+/// Once `queue` holds more than `max` samples, drops the oldest down to `target`.
+fn trim_queue(queue: &mut VecDeque<f32>, max: usize, target: usize) {
+    if queue.len() > max {
+        queue.drain(..queue.len() - target);
+    }
+}
+
 /// Removes the DC offset: the mixer outputs 0.0..=1.0, so silence would sit at a
 /// constant level instead of 0. The NES itself has a similar filter at about 90 Hz.
 #[derive(Default)]
@@ -107,5 +119,24 @@ impl HighPass {
         self.previous_in = sample;
         self.previous_out = out;
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_queue_leaves_short_queues_alone() {
+        let mut queue: VecDeque<f32> = (0..10).map(|n| n as f32).collect();
+        trim_queue(&mut queue, 10, 5);
+        assert_eq!(queue.len(), 10);
+    }
+
+    #[test]
+    fn trim_queue_drops_oldest_down_to_target() {
+        let mut queue: VecDeque<f32> = (0..11).map(|n| n as f32).collect();
+        trim_queue(&mut queue, 10, 5);
+        assert_eq!(queue, [6.0, 7.0, 8.0, 9.0, 10.0]);
     }
 }
