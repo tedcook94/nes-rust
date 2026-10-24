@@ -29,6 +29,7 @@ impl Console {
             self.cpu.stall(stall);
             cycles += stall;
         }
+        self.bus.tick_apu(cycles);
         if self.bus.tick_ppu(cycles) {
             self.cpu.trigger_nmi();
         }

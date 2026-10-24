@@ -1,3 +1,4 @@
+use crate::apu::Apu;
 use crate::cartridge::Mapper;
 use crate::controller::Controller;
 use crate::ppu::Ppu;
@@ -10,6 +11,7 @@ pub trait Bus {
 pub struct CpuBus {
     ram: [u8; 0x800],
     ppu: Ppu,
+    apu: Apu,
     mapper: Box<dyn Mapper>,
     dma_pending: bool,
     controller: Controller,
@@ -20,6 +22,7 @@ impl CpuBus {
         CpuBus {
             ram: [0; 0x800],
             ppu: Ppu::new(),
+            apu: Apu::new(),
             mapper,
             dma_pending: false,
             controller: Controller::new(),
@@ -35,6 +38,12 @@ impl CpuBus {
             self.ppu.tick(&*self.mapper);
         }
         self.ppu.take_nmi()
+    }
+
+    pub fn tick_apu(&mut self, cpu_cycles: u16) {
+        for _ in 0..cpu_cycles {
+            self.apu.tick();
+        }
     }
 
     pub fn set_buttons(&mut self, buttons: u8) {
@@ -72,7 +81,7 @@ impl Bus for CpuBus {
             }
             0x4014 => self.oam_dma(byte),
             0x4016 => self.controller.write(byte),
-            0x4000..=0x4017 => (), // reserved for APU
+            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(address, byte),
             0x4018..=0x401F => (), // unused test registers
             0x4020..=0xFFFF => self.mapper.cpu_write(address, byte),
         }
