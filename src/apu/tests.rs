@@ -644,3 +644,45 @@ fn mixer_peaks_near_one() {
     let sample = apu.sample();
     assert!(sample > 0.6 && sample < 1.0, "{sample}");
 }
+
+// Downsampling
+
+#[test]
+fn produces_44100_samples_per_second() {
+    let mut apu = enabled_apu();
+    tick_n(&mut apu, CPU_RATE as u32);
+    let count = apu.take_samples().len();
+    assert!((44_099..=44_100).contains(&count), "{count}");
+}
+
+#[test]
+fn sample_rate_is_configurable() {
+    let mut apu = enabled_apu();
+    apu.set_sample_rate(48_000);
+    tick_n(&mut apu, CPU_RATE as u32);
+    let count = apu.take_samples().len();
+    assert!((47_999..=48_000).contains(&count), "{count}");
+}
+
+#[test]
+fn take_samples_drains_the_buffer() {
+    let mut apu = enabled_apu();
+    tick_n(&mut apu, 100);
+    assert_eq!(apu.take_samples().len(), 2);
+    assert!(apu.take_samples().is_empty());
+}
+
+#[test]
+fn samples_average_the_cycles_they_cover() {
+    // A 50% pulse at period 8 is high for 72 cycles, low for 72; a sample spans ~41.
+    // Samples straddling an edge land in between, and the overall mean is half volume.
+    let mut apu = enabled_apu();
+    apu.triangle.step = 15;
+    playing_pulse(&mut apu, 2);
+    tick_n(&mut apu, 1000);
+    let full = 95.88 / (8128.0 / 15.0 + 100.0);
+    let samples = apu.take_samples();
+    assert!(samples.iter().any(|&s| s > 0.01 && s < full - 0.01));
+    let mean = samples.iter().sum::<f32>() / samples.len() as f32;
+    assert!((mean - full / 2.0).abs() < 0.01, "{mean}");
+}

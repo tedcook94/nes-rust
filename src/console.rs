@@ -40,6 +40,16 @@ impl Console {
         self.bus.set_buttons(buttons);
     }
 
+    /// Sets the output rate for `take_samples`; defaults to 44.1 kHz.
+    pub fn set_sample_rate(&mut self, rate: u32) {
+        self.bus.set_sample_rate(rate);
+    }
+
+    /// Audio samples in 0.0..=1.0 produced since the last call.
+    pub fn take_samples(&mut self) -> Vec<f32> {
+        self.bus.take_samples()
+    }
+
     pub fn step_frame(&mut self) {
         loop {
             self.step();

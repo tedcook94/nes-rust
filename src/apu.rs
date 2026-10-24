@@ -12,6 +12,9 @@ const LENGTH_TABLE: [u8; 32] = [
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
 ];
 
+/// NTSC CPU clock in Hz.
+const CPU_RATE: f64 = 1_789_773.0;
+
 // Frame counter steps, in CPU cycles since the sequence started.
 const STEP_1: u32 = 7457;
 const STEP_2: u32 = 14913;
@@ -28,6 +31,12 @@ pub struct Apu {
     odd_cycle: bool,
     frame_cycle: u32,
     five_step: bool,
+    /// CPU cycles per output sample; fractional, so samples land on an uneven grid.
+    cycles_per_sample: f64,
+    sample_clock: f64,
+    sample_sum: f32,
+    sample_count: u32,
+    samples: Vec<f32>,
 }
 
 impl Apu {
@@ -40,6 +49,11 @@ impl Apu {
             odd_cycle: false,
             frame_cycle: 0,
             five_step: false,
+            cycles_per_sample: CPU_RATE / 44_100.0,
+            sample_clock: 0.0,
+            sample_sum: 0.0,
+            sample_count: 0,
+            samples: Vec::new(),
         }
     }
 
@@ -53,6 +67,31 @@ impl Apu {
         self.triangle.clock_timer();
         self.noise.clock_timer();
         self.clock_frame_counter();
+        self.collect_sample();
+    }
+
+    pub fn set_sample_rate(&mut self, rate: u32) {
+        self.cycles_per_sample = CPU_RATE / f64::from(rate);
+    }
+
+    /// Hands over the samples produced since the last call.
+    pub fn take_samples(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.samples)
+    }
+
+    /// Averages every CPU cycle's output into one sample. Averaging acts as a crude
+    /// low-pass filter, which keeps high tones from aliasing into noise.
+    fn collect_sample(&mut self) {
+        self.sample_sum += self.sample();
+        self.sample_count += 1;
+        self.sample_clock += 1.0;
+        if self.sample_clock >= self.cycles_per_sample {
+            self.sample_clock -= self.cycles_per_sample;
+            self.samples
+                .push(self.sample_sum / self.sample_count as f32);
+            self.sample_sum = 0.0;
+            self.sample_count = 0;
+        }
     }
 
     fn clock_frame_counter(&mut self) {
@@ -104,10 +143,6 @@ impl Apu {
 
     /// Mixes the channels into one sample in 0.0..=1.0, using the NESdev formulas
     /// that approximate the hardware's nonlinear resistor DAC.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "sent to the audio output in the next commit")
-    )]
     pub fn sample(&self) -> f32 {
         let pulse = f32::from(self.pulse1.output() + self.pulse2.output());
         let pulse_out = if pulse == 0.0 {

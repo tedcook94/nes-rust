@@ -46,6 +46,14 @@ impl CpuBus {
         }
     }
 
+    pub fn set_sample_rate(&mut self, rate: u32) {
+        self.apu.set_sample_rate(rate);
+    }
+
+    pub fn take_samples(&mut self) -> Vec<f32> {
+        self.apu.take_samples()
+    }
+
     pub fn set_buttons(&mut self, buttons: u8) {
         self.controller.set_buttons(buttons);
     }
