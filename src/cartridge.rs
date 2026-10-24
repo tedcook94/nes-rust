@@ -1,3 +1,4 @@
+use mmc3::Mmc3;
 use nrom::Nrom;
 
 #[derive(Debug, PartialEq)]
@@ -85,10 +86,16 @@ pub fn create_mapper(cartridge: Cartridge) -> Result<Box<dyn Mapper>, RomError> 
             cartridge.chr_rom,
             cartridge.mirroring,
         ))),
+        4 => Ok(Box::new(Mmc3::new(
+            cartridge.prg_rom,
+            cartridge.chr_rom,
+            cartridge.mirroring,
+        ))),
         n => Err(RomError::UnsupportedMapper(n)),
     }
 }
 
+mod mmc3;
 mod nrom;
 
 #[cfg(test)]

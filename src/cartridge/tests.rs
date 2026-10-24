@@ -117,12 +117,12 @@ fn creates_mapper_zero() {
 
 #[test]
 fn rejects_unsupported_mapper() {
-    // Mapper 4 (MMC3): flags 6 high nibble = 4.
-    let cartridge = Cartridge::parse(&build_rom(1, 1, 0x40, 0)).unwrap();
+    // Mapper 2 (UxROM): flags 6 high nibble = 2.
+    let cartridge = Cartridge::parse(&build_rom(1, 1, 0x20, 0)).unwrap();
 
     assert_eq!(
         create_mapper(cartridge).err(),
-        Some(RomError::UnsupportedMapper(4))
+        Some(RomError::UnsupportedMapper(2))
     );
 }
 

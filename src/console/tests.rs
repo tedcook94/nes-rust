@@ -10,10 +10,10 @@ fn new_rejects_invalid_rom() {
 
 #[test]
 fn new_rejects_unsupported_mapper() {
-    // Mapper 4 (MMC3): flags 6 high nibble = 4.
+    // Mapper 2 (UxROM): flags 6 high nibble = 2.
     assert_eq!(
-        Console::new(&build_rom(1, 1, 0x40, 0)).err(),
-        Some(RomError::UnsupportedMapper(4))
+        Console::new(&build_rom(1, 1, 0x20, 0)).err(),
+        Some(RomError::UnsupportedMapper(2))
     );
 }
 
