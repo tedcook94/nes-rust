@@ -15,6 +15,8 @@ pub(super) struct Triangle {
     pub(super) timer_period: u16,
     timer: u16,
     pub(super) length: u8,
+    /// Set through $4015. While clear, the length counter is held at 0.
+    pub(super) enabled: bool,
 }
 
 impl Triangle {
@@ -28,6 +30,7 @@ impl Triangle {
             timer_period: 0,
             timer: 0,
             length: 0,
+            enabled: false,
         }
     }
 
@@ -42,7 +45,9 @@ impl Triangle {
             2 => self.timer_period = (self.timer_period & 0x0700) | u16::from(value),
             3 => {
                 self.timer_period = (self.timer_period & 0x00FF) | (u16::from(value & 0x07) << 8);
-                self.length = LENGTH_TABLE[usize::from(value >> 3)];
+                if self.enabled {
+                    self.length = LENGTH_TABLE[usize::from(value >> 3)];
+                }
                 self.linear_reload = true;
             }
             _ => unreachable!("triangle register {register}"),
@@ -73,16 +78,19 @@ impl Triangle {
         }
     }
 
+    pub(super) fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.length = 0;
+        }
+    }
+
     pub(super) fn clock_length(&mut self) {
         if !self.control && self.length > 0 {
             self.length -= 1;
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the mixer in a later commit")
-    )]
     pub(super) fn output(&self) -> u8 {
         SEQUENCE[usize::from(self.step)]
     }

@@ -65,6 +65,7 @@ impl Bus for CpuBus {
             0x0000..=0x1FFF => self.ram[to_ram_address(address)],
             0x2000..=0x3FFF => self.ppu.read_register(ppu_register(address), &*self.mapper),
             // Upper bits come from the data bus; $40 is what most games see.
+            0x4015 => self.apu.read_status(),
             0x4016 => 0x40 | self.controller.read(),
             0x4000..=0x4017 => 0, // reserved for APU and controller 2
             0x4018..=0x401F => 0, // unused test registers

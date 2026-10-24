@@ -3,6 +3,13 @@
 
 use super::*;
 
+/// Games enable channels through $4015 before playing; most tests start from there.
+fn enabled_apu() -> Apu {
+    let mut apu = Apu::new();
+    apu.write_register(0x4015, 0x0F);
+    apu
+}
+
 /// Sets pulse 1 to the given duty, constant volume 15, timer period 8, and a long note.
 fn playing_pulse(apu: &mut Apu, duty: u8) {
     apu.write_register(0x4000, (duty << 6) | 0x1F);
@@ -28,7 +35,7 @@ fn waveform(apu: &mut Apu) -> Vec<u8> {
 
 #[test]
 fn register_0_sets_duty_halt_and_volume() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0b10_1_1_0111);
     assert_eq!(apu.pulse1.duty, 2);
     assert!(apu.pulse1.envelope.looping);
@@ -38,7 +45,7 @@ fn register_0_sets_duty_halt_and_volume() {
 
 #[test]
 fn registers_2_and_3_set_the_11_bit_timer_period() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4002, 0xAB);
     apu.write_register(0x4003, 0b00000_101);
     assert_eq!(apu.pulse1.timer_period, 0x5AB);
@@ -46,7 +53,7 @@ fn registers_2_and_3_set_the_11_bit_timer_period() {
 
 #[test]
 fn register_3_loads_length_from_table() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0b00011_000);
     assert_eq!(apu.pulse1.length, LENGTH_TABLE[3]);
     assert_eq!(apu.pulse1.length, 2);
@@ -54,7 +61,7 @@ fn register_3_loads_length_from_table() {
 
 #[test]
 fn register_3_restarts_the_sequencer() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 2);
     next_step(&mut apu);
     apu.write_register(0x4003, 0x08);
@@ -63,7 +70,7 @@ fn register_3_restarts_the_sequencer() {
 
 #[test]
 fn pulse_2_has_its_own_registers() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4004, 0b01_0_1_0011);
     apu.write_register(0x4006, 0x34);
     apu.write_register(0x4007, 0x0A);
@@ -83,7 +90,7 @@ fn duty_waveforms() {
         [1, 1, 1, 1, 1, 0, 0, 1],
     ];
     for (duty, wave) in expected.iter().enumerate() {
-        let mut apu = Apu::new();
+        let mut apu = enabled_apu();
         playing_pulse(&mut apu, duty as u8);
         assert_eq!(waveform(&mut apu), wave, "duty {duty}");
     }
@@ -91,7 +98,7 @@ fn duty_waveforms() {
 
 #[test]
 fn timer_steps_every_period_plus_one_apu_cycles() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 0);
     apu.write_register(0x4002, 20);
 
@@ -110,7 +117,7 @@ fn timer_steps_every_period_plus_one_apu_cycles() {
 
 #[test]
 fn timer_only_clocks_on_every_other_cpu_cycle() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 0);
     apu.tick();
     assert_eq!(apu.pulse1.step, 0);
@@ -120,7 +127,7 @@ fn timer_only_clocks_on_every_other_cpu_cycle() {
 
 #[test]
 fn length_counter_counts_down_to_zero_and_silences() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 3); // step 0 of duty 3 is high
     apu.write_register(0x4003, 0b00011_000); // length 2
     assert_eq!(apu.pulse1.output(), 15);
@@ -134,7 +141,7 @@ fn length_counter_counts_down_to_zero_and_silences() {
 
 #[test]
 fn halt_flag_freezes_length_counter() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0x30);
     apu.write_register(0x4003, 0x08);
     apu.pulse1.clock_length();
@@ -143,7 +150,7 @@ fn halt_flag_freezes_length_counter() {
 
 #[test]
 fn output_is_volume_when_waveform_is_high() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 3);
     apu.write_register(0x4000, 0b11_0_1_1001);
     assert_eq!(apu.pulse1.output(), 9);
@@ -151,7 +158,7 @@ fn output_is_volume_when_waveform_is_high() {
 
 #[test]
 fn periods_below_8_are_silenced() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 3);
     apu.write_register(0x4002, 0x07);
     assert_eq!(apu.pulse1.output(), 0);
@@ -169,7 +176,7 @@ fn tick_n(apu: &mut Apu, cycles: u32) {
 
 #[test]
 fn envelope_start_sets_decay_to_15() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0x02); // decay mode, period 2
     apu.write_register(0x4003, 0x08);
     assert!(apu.pulse1.envelope.start);
@@ -180,7 +187,7 @@ fn envelope_start_sets_decay_to_15() {
 
 #[test]
 fn envelope_decays_every_period_plus_one_clocks() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0x02);
     apu.write_register(0x4003, 0x08);
     let envelope = &mut apu.pulse1.envelope;
@@ -196,7 +203,7 @@ fn envelope_decays_every_period_plus_one_clocks() {
 
 #[test]
 fn envelope_stops_at_zero_without_loop() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0x00);
     apu.write_register(0x4003, 0x08);
     for _ in 0..20 {
@@ -207,7 +214,7 @@ fn envelope_stops_at_zero_without_loop() {
 
 #[test]
 fn envelope_loop_wraps_zero_to_15() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0x20);
     apu.write_register(0x4003, 0x08);
     for _ in 0..16 {
@@ -220,7 +227,7 @@ fn envelope_loop_wraps_zero_to_15() {
 
 #[test]
 fn output_uses_decay_level_when_not_constant() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 3);
     apu.write_register(0x4000, 0b11_0_0_0000);
     apu.pulse1.envelope.clock();
@@ -232,7 +239,7 @@ fn output_uses_decay_level_when_not_constant() {
 
 #[test]
 fn register_1_sets_sweep_fields() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4001, 0b1_101_1_011);
     let sweep = &apu.pulse1.sweep;
     assert!(sweep.enabled);
@@ -244,7 +251,7 @@ fn register_1_sets_sweep_fields() {
 
 #[test]
 fn sweep_target_adds_shifted_period() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4002, 0x00);
     apu.write_register(0x4003, 0x01); // period $100
     apu.write_register(0x4001, 0b1_000_0_010);
@@ -253,7 +260,7 @@ fn sweep_target_adds_shifted_period() {
 
 #[test]
 fn sweep_negate_differs_between_pulse_channels() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0x01);
     apu.write_register(0x4001, 0b1_000_1_010);
     apu.write_register(0x4007, 0x01);
@@ -264,7 +271,7 @@ fn sweep_negate_differs_between_pulse_channels() {
 
 #[test]
 fn sweep_updates_period_when_divider_reaches_zero() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0x01);
     apu.write_register(0x4001, 0b1_001_0_001); // period 1, shift 1
     apu.pulse1.clock_sweep(); // reload, divider 0 so it also sweeps
@@ -277,7 +284,7 @@ fn sweep_updates_period_when_divider_reaches_zero() {
 
 #[test]
 fn sweep_does_nothing_with_shift_0_or_disabled() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0x01);
     apu.write_register(0x4001, 0b1_000_0_000);
     apu.pulse1.clock_sweep();
@@ -289,7 +296,7 @@ fn sweep_does_nothing_with_shift_0_or_disabled() {
 
 #[test]
 fn sweep_target_over_7ff_mutes_even_when_disabled() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_pulse(&mut apu, 3);
     apu.write_register(0x4002, 0xFF);
     apu.write_register(0x4003, 0x0D); // period $5FF, length index 1
@@ -305,7 +312,7 @@ fn sweep_target_over_7ff_mutes_even_when_disabled() {
 
 #[test]
 fn four_step_mode_clocks_envelopes_each_quarter() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4000, 0x00); // decay period 0: one step per clock
     apu.write_register(0x4003, 0x08);
     tick_n(&mut apu, STEP_1 - 1);
@@ -324,7 +331,7 @@ fn four_step_mode_clocks_envelopes_each_quarter() {
 
 #[test]
 fn four_step_mode_clocks_length_on_steps_2_and_4() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0x08); // 254
     tick_n(&mut apu, STEP_2 - 1);
     assert_eq!(apu.pulse1.length, 254);
@@ -336,7 +343,7 @@ fn four_step_mode_clocks_length_on_steps_2_and_4() {
 
 #[test]
 fn five_step_mode_has_a_longer_sequence() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0x08);
     apu.write_register(0x4017, 0x80);
     assert_eq!(
@@ -353,7 +360,7 @@ fn five_step_mode_has_a_longer_sequence() {
 
 #[test]
 fn writing_4017_resets_the_sequence() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4003, 0x08);
     tick_n(&mut apu, STEP_2 - 10);
     apu.write_register(0x4017, 0x00);
@@ -373,7 +380,7 @@ fn playing_triangle(apu: &mut Apu) {
 
 #[test]
 fn triangle_registers() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4008, 0b1_0010110);
     apu.write_register(0x400A, 0xCD);
     apu.write_register(0x400B, 0b00011_010);
@@ -387,7 +394,7 @@ fn triangle_registers() {
 
 #[test]
 fn triangle_steps_every_period_plus_one_cpu_cycles() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_triangle(&mut apu);
     apu.tick();
     assert_eq!(apu.triangle.step, 1);
@@ -399,7 +406,7 @@ fn triangle_steps_every_period_plus_one_cpu_cycles() {
 
 #[test]
 fn triangle_sequence_ramps_down_then_up() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_triangle(&mut apu);
     let wave: Vec<u8> = (0..32)
         .map(|_| {
@@ -416,7 +423,7 @@ fn triangle_sequence_ramps_down_then_up() {
 
 #[test]
 fn triangle_freezes_when_linear_or_length_is_zero() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     playing_triangle(&mut apu);
     apu.triangle.linear = 0;
     tick_n(&mut apu, 20);
@@ -430,7 +437,7 @@ fn triangle_freezes_when_linear_or_length_is_zero() {
 
 #[test]
 fn linear_counter_reloads_then_counts_down() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4008, 0x03);
     apu.write_register(0x400B, 0x08);
     apu.triangle.clock_linear();
@@ -446,7 +453,7 @@ fn linear_counter_reloads_then_counts_down() {
 
 #[test]
 fn control_flag_keeps_reloading_and_halts_length() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4008, 0x83);
     apu.write_register(0x400B, 0x08);
     apu.triangle.clock_linear();
@@ -458,7 +465,7 @@ fn control_flag_keeps_reloading_and_halts_length() {
 
 #[test]
 fn frame_counter_clocks_triangle_counters() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x4008, 0x05);
     apu.write_register(0x400B, 0x08);
     tick_n(&mut apu, STEP_2);
@@ -470,7 +477,7 @@ fn frame_counter_clocks_triangle_counters() {
 
 #[test]
 fn noise_registers() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x400C, 0b00_1_1_0101);
     apu.write_register(0x400E, 0x8A);
     apu.write_register(0x400F, 0b00011_000);
@@ -485,7 +492,7 @@ fn noise_registers() {
 
 #[test]
 fn noise_shift_register_feedback() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.noise.shift = 0x0041;
     apu.noise.clock_shift();
     assert_eq!(apu.noise.shift, 0x4020, "long mode: bit 0 XOR bit 1");
@@ -510,7 +517,7 @@ fn sequence_length(apu: &mut Apu) -> u32 {
 
 #[test]
 fn noise_sequence_lengths() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     assert_eq!(sequence_length(&mut apu), 32767);
     apu.noise.short_mode = true;
     assert_eq!(sequence_length(&mut apu), 93);
@@ -518,7 +525,7 @@ fn noise_sequence_lengths() {
 
 #[test]
 fn noise_shifts_every_period_cpu_cycles() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x400E, 0x01); // period 8
     apu.tick();
     let first = apu.noise.shift;
@@ -531,7 +538,7 @@ fn noise_shifts_every_period_cpu_cycles() {
 
 #[test]
 fn noise_output_is_volume_when_bit_0_is_clear() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x400C, 0x19);
     apu.write_register(0x400F, 0x08);
     apu.noise.shift = 0x0002;
@@ -545,10 +552,95 @@ fn noise_output_is_volume_when_bit_0_is_clear() {
 
 #[test]
 fn frame_counter_clocks_noise_envelope_and_length() {
-    let mut apu = Apu::new();
+    let mut apu = enabled_apu();
     apu.write_register(0x400C, 0x00);
     apu.write_register(0x400F, 0x08);
     tick_n(&mut apu, STEP_2);
     assert_eq!(apu.noise.envelope.decay, 14);
     assert_eq!(apu.noise.length, 253);
+}
+
+// $4015 and mixer
+
+#[test]
+fn channels_start_disabled_and_ignore_length_loads() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x08);
+    apu.write_register(0x400B, 0x08);
+    assert_eq!(apu.pulse1.length, 0);
+    assert_eq!(apu.triangle.length, 0);
+}
+
+#[test]
+fn status_reports_nonzero_length_counters() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4015, 0b0000_1010);
+    apu.write_register(0x4003, 0x08);
+    apu.write_register(0x4007, 0x08);
+    apu.write_register(0x400B, 0x08);
+    apu.write_register(0x400F, 0x08);
+    assert_eq!(apu.read_status(), 0b0000_1010);
+}
+
+#[test]
+fn disabling_a_channel_clears_its_length() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4003, 0x08);
+    apu.write_register(0x400F, 0x08);
+    apu.write_register(0x4015, 0b0000_0001);
+    assert_eq!(apu.pulse1.length, 254);
+    assert_eq!(apu.noise.length, 0);
+    assert_eq!(apu.read_status(), 0b0000_0001);
+}
+
+#[test]
+fn silence_mixes_to_zero() {
+    let mut apu = enabled_apu();
+    apu.triangle.step = 15; // the one triangle step that outputs 0
+    assert_eq!(apu.sample(), 0.0);
+}
+
+fn assert_close(actual: f32, expected: f32) {
+    assert!((actual - expected).abs() < 1e-4, "{actual} != {expected}");
+}
+
+#[test]
+fn mixer_pulse_formula() {
+    let mut apu = enabled_apu();
+    apu.triangle.step = 15;
+    playing_pulse(&mut apu, 3);
+    // One pulse at 15: 95.88 / (8128 / 15 + 100).
+    assert_close(apu.sample(), 0.149_31);
+    apu.write_register(0x4004, 0xDF);
+    apu.write_register(0x4006, 0x08);
+    apu.write_register(0x4007, 0x08);
+    // Both at 15 is less than double: 95.88 / (8128 / 30 + 100).
+    assert_close(apu.sample(), 0.258_42);
+}
+
+#[test]
+fn mixer_triangle_and_noise_formula() {
+    let mut apu = enabled_apu();
+    // Triangle at 15, noise silent: 159.79 / (8227 / 15 + 100).
+    assert_close(apu.sample(), 0.246_42);
+    apu.write_register(0x400C, 0x1F);
+    apu.write_register(0x400F, 0x08);
+    apu.noise.shift = 0x0002;
+    // 159.79 / (1 / (15/8227 + 15/12241) + 100).
+    let tnd = 15.0 / 8227.0 + 15.0 / 12241.0;
+    assert_close(apu.sample(), 159.79 / (1.0 / tnd + 100.0));
+}
+
+#[test]
+fn mixer_peaks_near_one() {
+    let mut apu = enabled_apu();
+    playing_pulse(&mut apu, 3);
+    apu.write_register(0x4004, 0xDF);
+    apu.write_register(0x4006, 0x08);
+    apu.write_register(0x4007, 0x08);
+    apu.write_register(0x400C, 0x1F);
+    apu.write_register(0x400F, 0x08);
+    apu.noise.shift = 0x0002;
+    let sample = apu.sample();
+    assert!(sample > 0.6 && sample < 1.0, "{sample}");
 }

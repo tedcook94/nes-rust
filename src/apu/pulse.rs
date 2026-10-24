@@ -27,6 +27,8 @@ pub(super) struct Pulse {
     pub(super) timer_period: u16,
     pub(super) timer: u16,
     pub(super) length: u8,
+    /// Set through $4015. While clear, the length counter is held at 0.
+    pub(super) enabled: bool,
 }
 
 impl Pulse {
@@ -47,6 +49,7 @@ impl Pulse {
             timer_period: 0,
             timer: 0,
             length: 0,
+            enabled: false,
         }
     }
 
@@ -67,7 +70,9 @@ impl Pulse {
             2 => self.timer_period = (self.timer_period & 0x0700) | u16::from(value),
             3 => {
                 self.timer_period = (self.timer_period & 0x00FF) | (u16::from(value & 0x07) << 8);
-                self.length = LENGTH_TABLE[usize::from(value >> 3)];
+                if self.enabled {
+                    self.length = LENGTH_TABLE[usize::from(value >> 3)];
+                }
                 self.step = 0;
                 self.envelope.start = true;
             }
@@ -82,6 +87,13 @@ impl Pulse {
             self.step = (self.step + 7) % 8;
         } else {
             self.timer -= 1;
+        }
+    }
+
+    pub(super) fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.length = 0;
         }
     }
 
@@ -119,10 +131,6 @@ impl Pulse {
         self.timer_period < 8 || self.sweep_target() > 0x7FF
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the mixer in a later commit")
-    )]
     pub(super) fn output(&self) -> u8 {
         if self.length == 0 || self.muted() {
             return 0;

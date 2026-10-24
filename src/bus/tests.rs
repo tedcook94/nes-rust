@@ -114,6 +114,15 @@ fn stubbed_range_writes_do_not_touch_ram() {
     assert_eq!(bus.read(0x0042), 0x00);
 }
 
+#[test]
+fn apu_status_is_read_at_4015() {
+    let mut bus = create_bus();
+
+    bus.write(0x4015, 0x01);
+    bus.write(0x4003, 0x08);
+    assert_eq!(bus.read(0x4015), 0x01);
+}
+
 // PPU register mirroring
 
 #[test]

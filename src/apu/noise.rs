@@ -14,6 +14,8 @@ pub(super) struct Noise {
     timer: u16,
     pub(super) shift: u16,
     pub(super) length: u8,
+    /// Set through $4015. While clear, the length counter is held at 0.
+    pub(super) enabled: bool,
 }
 
 impl Noise {
@@ -25,6 +27,7 @@ impl Noise {
             timer: 0,
             shift: 1,
             length: 0,
+            enabled: false,
         }
     }
 
@@ -38,7 +41,9 @@ impl Noise {
                 self.timer_period = PERIODS[usize::from(value & 0x0F)];
             }
             3 => {
-                self.length = LENGTH_TABLE[usize::from(value >> 3)];
+                if self.enabled {
+                    self.length = LENGTH_TABLE[usize::from(value >> 3)];
+                }
                 self.envelope.start = true;
             }
             _ => unreachable!("noise register {register}"),
@@ -61,16 +66,19 @@ impl Noise {
         self.shift = (self.shift >> 1) | (feedback << 14);
     }
 
+    pub(super) fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.length = 0;
+        }
+    }
+
     pub(super) fn clock_length(&mut self) {
         if !self.envelope.looping && self.length > 0 {
             self.length -= 1;
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the mixer in a later commit")
-    )]
     pub(super) fn output(&self) -> u8 {
         if self.length == 0 || self.shift & 1 != 0 {
             return 0;

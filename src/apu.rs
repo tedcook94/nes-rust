@@ -94,12 +94,49 @@ impl Apu {
         self.pulse2.clock_sweep();
     }
 
+    /// Bits 0-3: whether each channel's length counter is nonzero. DMC and IRQ bits stay 0.
+    pub fn read_status(&self) -> u8 {
+        u8::from(self.pulse1.length > 0)
+            | u8::from(self.pulse2.length > 0) << 1
+            | u8::from(self.triangle.length > 0) << 2
+            | u8::from(self.noise.length > 0) << 3
+    }
+
+    /// Mixes the channels into one sample in 0.0..=1.0, using the NESdev formulas
+    /// that approximate the hardware's nonlinear resistor DAC.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "sent to the audio output in the next commit")
+    )]
+    pub fn sample(&self) -> f32 {
+        let pulse = f32::from(self.pulse1.output() + self.pulse2.output());
+        let pulse_out = if pulse == 0.0 {
+            0.0
+        } else {
+            95.88 / (8128.0 / pulse + 100.0)
+        };
+        let tnd =
+            f32::from(self.triangle.output()) / 8227.0 + f32::from(self.noise.output()) / 12241.0;
+        let tnd_out = if tnd == 0.0 {
+            0.0
+        } else {
+            159.79 / (1.0 / tnd + 100.0)
+        };
+        pulse_out + tnd_out
+    }
+
     pub fn write_register(&mut self, address: u16, value: u8) {
         match address {
             0x4000..=0x4003 => self.pulse1.write(address - 0x4000, value),
             0x4004..=0x4007 => self.pulse2.write(address - 0x4004, value),
             0x4008..=0x400B => self.triangle.write(address - 0x4008, value),
             0x400C..=0x400F => self.noise.write(address - 0x400C, value),
+            0x4015 => {
+                self.pulse1.set_enabled(value & 0x01 != 0);
+                self.pulse2.set_enabled(value & 0x02 != 0);
+                self.triangle.set_enabled(value & 0x04 != 0);
+                self.noise.set_enabled(value & 0x08 != 0);
+            }
             0x4017 => {
                 // Bit 6 inhibits the frame IRQ; IRQs arrive with milestone 8.
                 self.five_step = value & 0x80 != 0;
