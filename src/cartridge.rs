@@ -20,6 +20,14 @@ pub trait Mapper {
     fn ppu_read(&self, address: u16) -> u8;
     fn ppu_write(&mut self, address: u16, value: u8);
     fn mirroring(&self) -> Mirroring;
+
+    /// Called once per rendered scanline, for mappers that count lines.
+    fn clock_scanline(&mut self) {}
+
+    /// Whether the mapper is holding the CPU's IRQ line.
+    fn irq_pending(&self) -> bool {
+        false
+    }
 }
 
 pub struct Cartridge {

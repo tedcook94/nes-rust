@@ -27,6 +27,7 @@ pub struct Ppu {
     frame: Box<[u8; WIDTH * HEIGHT]>,
     sprite_zero_hit: bool,
     frame_ready: bool,
+    scanline_clock: bool,
 }
 
 const CTRL_NAMETABLE: u8 = 0b0000_0011;
@@ -80,6 +81,7 @@ impl Ppu {
             frame: Box::new([0; WIDTH * HEIGHT]),
             sprite_zero_hit: false,
             frame_ready: false,
+            scanline_clock: false,
         }
     }
 
@@ -110,6 +112,9 @@ impl Ppu {
         if self.rendering_enabled() && (visible || self.scanline == PRE_RENDER_SCANLINE) {
             match self.dot {
                 256 => self.increment_y(),
+                // MMC3 counts lines by watching the PPU address bus switch to sprite
+                // fetches, which happens around dot 260 with the usual pattern table layout.
+                260 => self.scanline_clock = true,
                 257 => self.v = (self.v & !HORIZONTAL_BITS) | (self.t & HORIZONTAL_BITS),
                 280..=304 if self.scanline == PRE_RENDER_SCANLINE => {
                     self.v = (self.v & !VERTICAL_BITS) | (self.t & VERTICAL_BITS);
@@ -123,6 +128,11 @@ impl Ppu {
             self.dot = 0;
             self.scanline = (self.scanline + 1) % SCANLINES_PER_FRAME;
         }
+    }
+
+    /// Reports whether a mapper scanline clock happened since the last call.
+    pub fn take_scanline_clock(&mut self) -> bool {
+        std::mem::take(&mut self.scanline_clock)
     }
 
     fn rendering_enabled(&self) -> bool {

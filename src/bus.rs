@@ -36,6 +36,9 @@ impl CpuBus {
     pub fn tick_ppu(&mut self, cpu_cycles: u16) -> bool {
         for _ in 0..u32::from(cpu_cycles) * 3 {
             self.ppu.tick(&*self.mapper);
+            if self.ppu.take_scanline_clock() {
+                self.mapper.clock_scanline();
+            }
         }
         self.ppu.take_nmi()
     }
@@ -54,9 +57,8 @@ impl CpuBus {
         self.apu.take_samples()
     }
 
-    /// No device drives IRQ yet; the MMC3 mapper will.
     pub fn irq_line(&self) -> bool {
-        false
+        self.mapper.irq_pending()
     }
 
     pub fn set_buttons(&mut self, buttons: u8) {

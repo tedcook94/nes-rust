@@ -1441,3 +1441,44 @@ fn mid_frame_scroll_change_splits_the_screen() {
     assert_eq!(pixel(&ppu, 1, 24), 0x01, "above the split: unscrolled");
     assert_eq!(pixel(&ppu, 1, 32), 0x03, "below the split: scrolled by 2");
 }
+
+// Mapper scanline clock
+
+fn count_scanline_clocks(ppu: &mut Ppu, mapper: &TestMapper) -> u32 {
+    let mut clocks = 0;
+    for _ in 0..341 * 262 {
+        ppu.tick(mapper);
+        clocks += u32::from(ppu.take_scanline_clock());
+    }
+    clocks
+}
+
+#[test]
+fn scanline_clock_fires_on_visible_and_pre_render_lines() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    enable_background(&mut ppu, &mut mapper);
+    assert_eq!(count_scanline_clocks(&mut ppu, &mapper), 241);
+}
+
+#[test]
+fn scanline_clock_fires_at_dot_260() {
+    let mut ppu = Ppu::new();
+    let mut mapper = TestMapper::new(Mirroring::Horizontal);
+    enable_background(&mut ppu, &mut mapper);
+    tick_to_with(&mut ppu, &mapper, 10, 260);
+    ppu.take_scanline_clock(); // from earlier lines
+    tick_to_with(&mut ppu, &mapper, 11, 260);
+    assert!(ppu.take_scanline_clock(), "line 10");
+    assert!(!ppu.take_scanline_clock());
+    ppu.tick(&mapper);
+    assert!(ppu.take_scanline_clock());
+    assert!(!ppu.take_scanline_clock(), "taking clears it");
+}
+
+#[test]
+fn no_scanline_clock_while_rendering_is_disabled() {
+    let mut ppu = Ppu::new();
+    let mapper = TestMapper::new(Mirroring::Horizontal);
+    assert_eq!(count_scanline_clocks(&mut ppu, &mapper), 0);
+}
