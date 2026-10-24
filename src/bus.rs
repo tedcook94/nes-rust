@@ -43,10 +43,19 @@ impl CpuBus {
         self.ppu.take_nmi()
     }
 
-    pub fn tick_apu(&mut self, cpu_cycles: u16) {
+    /// Returns how many cycles DMC sample fetches stall the CPU.
+    pub fn tick_apu(&mut self, cpu_cycles: u16) -> u16 {
+        let mut stall = 0;
         for _ in 0..cpu_cycles {
             self.apu.tick();
+            if let Some(address) = self.apu.dmc_fetch_address() {
+                let byte = self.read(address);
+                self.apu.dmc_fill(byte);
+                // Real stalls are 1-4 cycles depending on what the CPU is doing.
+                stall += 4;
+            }
         }
+        stall
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {

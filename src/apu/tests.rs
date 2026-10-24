@@ -686,3 +686,120 @@ fn samples_average_the_cycles_they_cover() {
     let mean = samples.iter().sum::<f32>() / samples.len() as f32;
     assert!((mean - full / 2.0).abs() < 0.01, "{mean}");
 }
+
+// DMC
+
+#[test]
+fn dmc_registers() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4010, 0x4F);
+    apu.write_register(0x4011, 0xFF);
+    apu.write_register(0x4012, 0x02);
+    apu.write_register(0x4013, 0x03);
+    assert!(apu.dmc.looping);
+    assert_eq!(apu.dmc.level, 0x7F);
+    apu.write_register(0x4015, 0x10);
+    assert_eq!(apu.dmc.address, 0xC080);
+    assert_eq!(apu.dmc.bytes_remaining, 49);
+}
+
+#[test]
+fn enabling_dmc_requests_the_first_byte() {
+    let mut apu = enabled_apu();
+    assert_eq!(apu.dmc_fetch_address(), None);
+    apu.write_register(0x4015, 0x10);
+    assert_eq!(apu.dmc_fetch_address(), Some(0xC000));
+    apu.dmc_fill(0xAA);
+    assert_eq!(apu.dmc_fetch_address(), None, "buffer full");
+    assert_eq!(apu.dmc.bytes_remaining, 0);
+}
+
+#[test]
+fn disabling_dmc_stops_fetching() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4013, 0x01);
+    apu.write_register(0x4015, 0x10);
+    apu.write_register(0x4015, 0x00);
+    assert_eq!(apu.dmc_fetch_address(), None);
+}
+
+#[test]
+fn dmc_loops_back_to_sample_start() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4010, 0x40);
+    apu.write_register(0x4015, 0x10);
+    apu.dmc_fill(0);
+    assert_eq!(apu.dmc.address, 0xC000);
+    assert_eq!(apu.dmc.bytes_remaining, 1);
+}
+
+#[test]
+fn dmc_address_wraps_to_8000() {
+    let mut apu = enabled_apu();
+    apu.dmc.address = 0xFFFF;
+    apu.dmc.bytes_remaining = 2;
+    apu.dmc_fill(0);
+    assert_eq!(apu.dmc.address, 0x8000);
+}
+
+/// Fastest rate (54 CPU cycles per bit), sample byte already loaded into the shifter.
+fn playing_dmc(apu: &mut Apu, byte: u8, level: u8) {
+    apu.write_register(0x4010, 0x0F);
+    apu.write_register(0x4011, level);
+    apu.dmc.buffer = Some(byte);
+    // Finish the initial silent byte so `byte` moves into the shifter.
+    tick_n(apu, 8 * 54);
+}
+
+#[test]
+fn dmc_bits_move_level_up_and_down_by_2() {
+    let mut apu = enabled_apu();
+    playing_dmc(&mut apu, 0b0000_0011, 64);
+    let levels: Vec<u8> = (0..4)
+        .map(|_| {
+            tick_n(&mut apu, 54);
+            apu.dmc.level
+        })
+        .collect();
+    assert_eq!(levels, [66, 68, 66, 64]);
+}
+
+#[test]
+fn dmc_level_clamps_at_both_ends() {
+    let mut apu = enabled_apu();
+    playing_dmc(&mut apu, 0xFF, 126);
+    tick_n(&mut apu, 54);
+    assert_eq!(apu.dmc.level, 126);
+
+    let mut apu = enabled_apu();
+    playing_dmc(&mut apu, 0x00, 1);
+    tick_n(&mut apu, 54);
+    assert_eq!(apu.dmc.level, 1);
+}
+
+#[test]
+fn dmc_holds_level_when_silent() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4010, 0x0F);
+    apu.write_register(0x4011, 40);
+    tick_n(&mut apu, 20 * 54);
+    assert_eq!(apu.dmc.level, 40);
+}
+
+#[test]
+fn mixer_includes_dmc() {
+    let mut apu = enabled_apu();
+    apu.triangle.step = 15;
+    apu.write_register(0x4011, 64);
+    assert_close(apu.sample(), 159.79 / (22638.0 / 64.0 + 100.0));
+}
+
+#[test]
+fn dmc_goes_silent_when_sample_runs_out() {
+    let mut apu = enabled_apu();
+    playing_dmc(&mut apu, 0xFF, 64);
+    tick_n(&mut apu, 8 * 54);
+    assert_eq!(apu.dmc.level, 80);
+    tick_n(&mut apu, 8 * 54);
+    assert_eq!(apu.dmc.level, 80, "empty buffer: level holds");
+}

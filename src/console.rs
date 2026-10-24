@@ -29,7 +29,10 @@ impl Console {
             self.cpu.stall(stall);
             cycles += stall;
         }
-        self.bus.tick_apu(cycles);
+        let dmc_stall = self.bus.tick_apu(cycles);
+        // The APU skips the stall cycles themselves; a few cycles of drift is inaudible.
+        self.cpu.stall(dmc_stall);
+        cycles += dmc_stall;
         if self.bus.tick_ppu(cycles) {
             self.cpu.trigger_nmi();
         }

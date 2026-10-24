@@ -324,3 +324,11 @@ fn controller_read_sets_open_bus_bits() {
 
     assert_eq!(bus.read(0x4016), 0x40);
 }
+
+#[test]
+fn dmc_fetch_reads_prg_and_stalls() {
+    let mut bus = create_bus();
+    bus.write(0x4015, 0x10);
+    assert_eq!(bus.tick_apu(1), 4);
+    assert_eq!(bus.tick_apu(1), 0, "buffer full until the shifter takes it");
+}

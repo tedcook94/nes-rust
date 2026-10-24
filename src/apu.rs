@@ -1,8 +1,10 @@
+mod dmc;
 mod envelope;
 mod noise;
 mod pulse;
 mod triangle;
 
+use dmc::Dmc;
 use noise::Noise;
 use pulse::Pulse;
 use triangle::Triangle;
@@ -27,6 +29,7 @@ pub struct Apu {
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
+    dmc: Dmc,
     /// Pulse timers run at half the CPU rate, so they only clock on every other cycle.
     odd_cycle: bool,
     frame_cycle: u32,
@@ -46,6 +49,7 @@ impl Apu {
             pulse2: Pulse::new(false),
             triangle: Triangle::new(),
             noise: Noise::new(),
+            dmc: Dmc::new(),
             odd_cycle: false,
             frame_cycle: 0,
             five_step: false,
@@ -66,8 +70,18 @@ impl Apu {
         self.odd_cycle = !self.odd_cycle;
         self.triangle.clock_timer();
         self.noise.clock_timer();
+        self.dmc.clock_timer();
         self.clock_frame_counter();
         self.collect_sample();
+    }
+
+    /// The PRG address the DMC needs read next; answer with `dmc_fill`.
+    pub fn dmc_fetch_address(&self) -> Option<u16> {
+        self.dmc.fetch_address()
+    }
+
+    pub fn dmc_fill(&mut self, byte: u8) {
+        self.dmc.fill(byte);
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
@@ -150,8 +164,9 @@ impl Apu {
         } else {
             95.88 / (8128.0 / pulse + 100.0)
         };
-        let tnd =
-            f32::from(self.triangle.output()) / 8227.0 + f32::from(self.noise.output()) / 12241.0;
+        let tnd = f32::from(self.triangle.output()) / 8227.0
+            + f32::from(self.noise.output()) / 12241.0
+            + f32::from(self.dmc.output()) / 22638.0;
         let tnd_out = if tnd == 0.0 {
             0.0
         } else {
@@ -170,8 +185,10 @@ impl Apu {
                 self.pulse1.set_enabled(value & 0x01 != 0);
                 self.pulse2.set_enabled(value & 0x02 != 0);
                 self.triangle.set_enabled(value & 0x04 != 0);
+                self.dmc.set_enabled(value & 0x10 != 0);
                 self.noise.set_enabled(value & 0x08 != 0);
             }
+            0x4010..=0x4013 => self.dmc.write(address - 0x4010, value),
             0x4017 => {
                 // Bit 6 inhibits the frame IRQ; IRQs arrive with milestone 8.
                 self.five_step = value & 0x80 != 0;
