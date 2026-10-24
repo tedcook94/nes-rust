@@ -332,3 +332,13 @@ fn dmc_fetch_reads_prg_and_stalls() {
     assert_eq!(bus.tick_apu(1), 4);
     assert_eq!(bus.tick_apu(1), 0, "buffer full until the shifter takes it");
 }
+
+#[test]
+fn dmc_irq_drives_the_irq_line() {
+    let mut bus = create_bus();
+    bus.write(0x4010, 0x80);
+    bus.write(0x4015, 0x10);
+    assert!(!bus.irq_line());
+    bus.tick_apu(1);
+    assert!(bus.irq_line());
+}

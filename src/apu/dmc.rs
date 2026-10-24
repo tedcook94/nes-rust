@@ -5,6 +5,8 @@ const RATES: [u16; 16] = [
 
 /// Delta modulation channel: plays 1-bit delta-encoded samples read from PRG.
 pub(super) struct Dmc {
+    irq_enabled: bool,
+    pub(super) irq_pending: bool,
     pub(super) looping: bool,
     timer_period: u16,
     timer: u16,
@@ -22,6 +24,8 @@ pub(super) struct Dmc {
 impl Dmc {
     pub(super) fn new() -> Self {
         Dmc {
+            irq_enabled: false,
+            irq_pending: false,
             looping: false,
             timer_period: RATES[0],
             timer: 0,
@@ -40,8 +44,11 @@ impl Dmc {
     /// `register` is 0-3, relative to $4010.
     pub(super) fn write(&mut self, register: u16, value: u8) {
         match register {
-            // Bit 7 (IRQ enable) arrives with the DMC IRQ.
             0 => {
+                self.irq_enabled = value & 0x80 != 0;
+                if !self.irq_enabled {
+                    self.irq_pending = false;
+                }
                 self.looping = value & 0x40 != 0;
                 self.timer_period = RATES[usize::from(value & 0x0F)];
             }
@@ -53,6 +60,7 @@ impl Dmc {
     }
 
     pub(super) fn set_enabled(&mut self, enabled: bool) {
+        self.irq_pending = false;
         if !enabled {
             self.bytes_remaining = 0;
         } else if self.bytes_remaining == 0 {
@@ -75,8 +83,12 @@ impl Dmc {
         // The address wraps from $FFFF to $8000, not $0000.
         self.address = self.address.checked_add(1).unwrap_or(0x8000);
         self.bytes_remaining -= 1;
-        if self.bytes_remaining == 0 && self.looping {
-            self.restart();
+        if self.bytes_remaining == 0 {
+            if self.looping {
+                self.restart();
+            } else if self.irq_enabled {
+                self.irq_pending = true;
+            }
         }
     }
 

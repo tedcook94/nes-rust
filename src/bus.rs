@@ -67,7 +67,7 @@ impl CpuBus {
     }
 
     pub fn irq_line(&self) -> bool {
-        self.mapper.irq_pending()
+        self.mapper.irq_pending() || self.apu.irq_pending()
     }
 
     pub fn set_buttons(&mut self, buttons: u8) {

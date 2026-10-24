@@ -76,6 +76,10 @@ impl Apu {
     }
 
     /// The PRG address the DMC needs read next; answer with `dmc_fill`.
+    pub fn irq_pending(&self) -> bool {
+        self.dmc.irq_pending
+    }
+
     pub fn dmc_fetch_address(&self) -> Option<u16> {
         self.dmc.fetch_address()
     }
@@ -147,12 +151,15 @@ impl Apu {
         self.pulse2.clock_sweep();
     }
 
-    /// Bits 0-3: whether each channel's length counter is nonzero. DMC and IRQ bits stay 0.
+    /// Bits 0-3: whether each channel's length counter is nonzero. Bit 4: DMC sample
+    /// still playing. Bit 7: DMC IRQ. The frame IRQ (bit 6) is not implemented.
     pub fn read_status(&self) -> u8 {
         u8::from(self.pulse1.length > 0)
             | u8::from(self.pulse2.length > 0) << 1
             | u8::from(self.triangle.length > 0) << 2
             | u8::from(self.noise.length > 0) << 3
+            | u8::from(self.dmc.bytes_remaining > 0) << 4
+            | u8::from(self.dmc.irq_pending) << 7
     }
 
     /// Mixes the channels into one sample in 0.0..=1.0, using the NESdev formulas
@@ -190,7 +197,8 @@ impl Apu {
             }
             0x4010..=0x4013 => self.dmc.write(address - 0x4010, value),
             0x4017 => {
-                // Bit 6 inhibits the frame IRQ; IRQs arrive with milestone 8.
+                // Bit 6 inhibits the frame IRQ, which isn't implemented; games that use
+                // it are rare, and SMB3 keeps it inhibited.
                 self.five_step = value & 0x80 != 0;
                 // Hardware resets 3-4 cycles later; the difference is inaudible.
                 self.frame_cycle = 0;

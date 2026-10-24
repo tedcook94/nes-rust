@@ -803,3 +803,59 @@ fn dmc_goes_silent_when_sample_runs_out() {
     tick_n(&mut apu, 8 * 54);
     assert_eq!(apu.dmc.level, 80, "empty buffer: level holds");
 }
+
+// DMC IRQ and status
+
+#[test]
+fn status_bit_4_reports_dmc_bytes_remaining() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4013, 0x01);
+    apu.write_register(0x4015, 0x10);
+    assert_eq!(apu.read_status() & 0x10, 0x10);
+    apu.write_register(0x4015, 0x00);
+    assert_eq!(apu.read_status() & 0x10, 0);
+}
+
+fn finished_sample_with_irq(apu: &mut Apu) {
+    apu.write_register(0x4010, 0x80);
+    apu.write_register(0x4015, 0x10);
+    apu.dmc_fill(0);
+}
+
+#[test]
+fn dmc_irq_fires_when_sample_ends() {
+    let mut apu = enabled_apu();
+    finished_sample_with_irq(&mut apu);
+    assert!(apu.irq_pending());
+    assert_eq!(apu.read_status() & 0x80, 0x80);
+}
+
+#[test]
+fn dmc_irq_needs_enable_and_no_loop() {
+    let mut apu = enabled_apu();
+    apu.write_register(0x4015, 0x10);
+    apu.dmc_fill(0);
+    assert!(!apu.irq_pending(), "IRQ disabled");
+
+    let mut apu = enabled_apu();
+    apu.write_register(0x4010, 0xC0);
+    apu.write_register(0x4015, 0x10);
+    apu.dmc_fill(0);
+    assert!(!apu.irq_pending(), "looping");
+}
+
+#[test]
+fn writing_4015_acknowledges_dmc_irq() {
+    let mut apu = enabled_apu();
+    finished_sample_with_irq(&mut apu);
+    apu.write_register(0x4015, 0x00);
+    assert!(!apu.irq_pending());
+}
+
+#[test]
+fn clearing_irq_enable_acknowledges_dmc_irq() {
+    let mut apu = enabled_apu();
+    finished_sample_with_irq(&mut apu);
+    apu.write_register(0x4010, 0x00);
+    assert!(!apu.irq_pending());
+}
