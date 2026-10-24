@@ -17,6 +17,11 @@ pub(super) struct Mmc3 {
     /// $8000 bit 7: swaps the 2KB and 1KB CHR halves.
     chr_inversion: bool,
     mirroring: Mirroring,
+    irq_latch: u8,
+    irq_counter: u8,
+    irq_reload: bool,
+    irq_enabled: bool,
+    irq_pending: bool,
 }
 
 impl Mmc3 {
@@ -32,6 +37,11 @@ impl Mmc3 {
             prg_mode: false,
             chr_inversion: false,
             mirroring,
+            irq_latch: 0,
+            irq_counter: 0,
+            irq_reload: false,
+            irq_enabled: false,
+            irq_pending: false,
         }
     }
 
@@ -105,7 +115,15 @@ impl Mapper for Mmc3 {
                     Mirroring::Horizontal
                 };
             }
-            _ => {} // IRQ registers arrive in the next commit
+            0xC000..=0xDFFF if even => self.irq_latch = value,
+            0xC000..=0xDFFF => self.irq_reload = true,
+            // Disabling also acknowledges a pending IRQ.
+            0xE000..=0xFFFF if even => {
+                self.irq_enabled = false;
+                self.irq_pending = false;
+            }
+            0xE000..=0xFFFF => self.irq_enabled = true,
+            _ => {}
         }
     }
 
@@ -122,6 +140,22 @@ impl Mapper for Mmc3 {
 
     fn mirroring(&self) -> Mirroring {
         self.mirroring
+    }
+
+    fn clock_scanline(&mut self) {
+        if self.irq_counter == 0 || self.irq_reload {
+            self.irq_counter = self.irq_latch;
+            self.irq_reload = false;
+        } else {
+            self.irq_counter -= 1;
+        }
+        if self.irq_counter == 0 && self.irq_enabled {
+            self.irq_pending = true;
+        }
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
     }
 }
 

@@ -105,3 +105,80 @@ fn chr_ram_is_writable_through_banks() {
     assert_eq!(mapper.ppu_read(0x1000), 0x55);
     assert_eq!(mapper.ppu_read(0x0000), 0x00);
 }
+
+// Scanline IRQ
+
+fn irq_mapper(latch: u8) -> Mmc3 {
+    let mut mapper = mmc3();
+    mapper.cpu_write(0xC000, latch);
+    mapper.cpu_write(0xC001, 0);
+    mapper.cpu_write(0xE001, 0);
+    mapper
+}
+
+fn clocks_until_irq(mapper: &mut Mmc3) -> u32 {
+    (1..=300)
+        .find(|_| {
+            mapper.clock_scanline();
+            mapper.irq_pending()
+        })
+        .expect("no IRQ")
+}
+
+#[test]
+fn irq_fires_after_latch_plus_one_lines() {
+    // The first clock reloads the counter to the latch; then it counts down to 0.
+    let mut mapper = irq_mapper(3);
+    assert_eq!(clocks_until_irq(&mut mapper), 4);
+}
+
+#[test]
+fn counter_reloads_after_reaching_zero() {
+    let mut mapper = irq_mapper(3);
+    clocks_until_irq(&mut mapper);
+    mapper.cpu_write(0xE000, 0);
+    mapper.cpu_write(0xE001, 0);
+    assert_eq!(clocks_until_irq(&mut mapper), 4);
+}
+
+#[test]
+fn irq_stays_pending_until_e000() {
+    let mut mapper = irq_mapper(1);
+    clocks_until_irq(&mut mapper);
+    mapper.clock_scanline();
+    assert!(mapper.irq_pending());
+    mapper.cpu_write(0xE001, 0);
+    assert!(mapper.irq_pending(), "re-enabling does not acknowledge");
+    mapper.cpu_write(0xE000, 0);
+    assert!(!mapper.irq_pending());
+}
+
+#[test]
+fn disabled_irq_still_counts_but_does_not_fire() {
+    let mut mapper = irq_mapper(2);
+    mapper.cpu_write(0xE000, 0);
+    for _ in 0..3 {
+        mapper.clock_scanline();
+    }
+    assert!(!mapper.irq_pending());
+    assert_eq!(mapper.irq_counter, 0);
+}
+
+#[test]
+fn c001_forces_reload_on_next_clock() {
+    let mut mapper = irq_mapper(5);
+    mapper.clock_scanline();
+    mapper.clock_scanline();
+    assert_eq!(mapper.irq_counter, 4);
+    mapper.cpu_write(0xC000, 10);
+    mapper.cpu_write(0xC001, 0);
+    mapper.clock_scanline();
+    assert_eq!(mapper.irq_counter, 10);
+}
+
+#[test]
+fn latch_0_fires_every_line() {
+    let mut mapper = irq_mapper(0);
+    mapper.clock_scanline();
+    assert!(mapper.irq_pending());
+}
