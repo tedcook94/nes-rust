@@ -11,7 +11,7 @@ A NES emulator written in Rust as a learning project.
 - [x] **4. nestest**: Compare the CPU trace against the `nestest.nes` reference log.
 - [x] **5. PPU**: Registers, VRAM and palettes, background rendering, sprites and OAM DMA, scrolling, NMI and sprite-0 hit, and frame timing.
 - [x] **6. Frontend & input**: Window, framebuffer, and controller input. **SMB1 playable (silent).**
-- [ ] **7. APU**: Pulse, triangle, and noise channels, the frame counter, and audio output. **SMB1 complete.**
+- [x] **7. APU**: Pulse, triangle, and noise channels, the frame counter, and audio output. **SMB1 complete.** (DMC not yet implemented.)
 - [ ] **8. MMC3 (mapper 4)**: Bank switching, CPU IRQ, and the scanline IRQ. **SMB3 playable.**
 
 ## References
