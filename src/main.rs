@@ -20,11 +20,11 @@ fn main() {
     let (_stream, sample_rate) = start_audio(Arc::clone(&queue));
     console.set_sample_rate(sample_rate);
     let mut filter = HighPass::default();
-    // The window runs at 60 fps but the NES at about 60.1, so samples slowly pile up.
-    // Capping the queue bounds the lag to about 3 frames.
-    let frame_samples = sample_rate as usize / 60;
-    let max_queued = frame_samples * 3;
-    let target_queued = frame_samples * 2;
+    // Frames are paced by a timer for smooth video. The sound card's clock differs slightly
+    // from ours, so the sample rate is nudged to keep about 3 frames of audio queued.
+    let target_queued = sample_rate as usize / 60 * 3;
+    let frame_period = std::time::Duration::from_secs_f64(1.0 / NES_FPS);
+    let mut deadline = std::time::Instant::now();
 
     let options = WindowOptions {
         scale: Scale::X2,
@@ -32,7 +32,7 @@ fn main() {
     };
     let mut window = Window::new(&path, WIDTH, HEIGHT, options)
         .unwrap_or_else(|e| panic!("can't open window: {e}"));
-    window.set_target_fps(60);
+    window.set_target_fps(0);
 
     // Keyboard → NES buttons. Arrow keys move; Z/X are B/A; Enter/Right Shift are Start/Select.
     let key_map = [
@@ -53,12 +53,23 @@ fn main() {
             .filter(|(key, _)| window.is_key_down(*key))
             .fold(0, |held, (_, button)| held | button);
         console.set_buttons(buttons);
+        let now = std::time::Instant::now();
+        if now < deadline {
+            std::thread::sleep(deadline - now);
+        }
+        deadline += frame_period;
+        // After a long stall (e.g. dragging the window), resync instead of racing to catch up.
+        if deadline < std::time::Instant::now() {
+            deadline = std::time::Instant::now() + frame_period;
+        }
+        let queued = queue.lock().unwrap().len();
+        console.set_sample_rate(adjusted_rate(sample_rate, queued, target_queued));
         console.step_frame();
         let samples = console.take_samples();
-        let mut queued = queue.lock().unwrap();
-        queued.extend(samples.into_iter().map(|s| filter.apply(s)));
-        trim_queue(&mut queued, max_queued, target_queued);
-        drop(queued);
+        queue
+            .lock()
+            .unwrap()
+            .extend(samples.into_iter().map(|s| filter.apply(s)));
         for (pixel, &value) in buffer.iter_mut().zip(console.frame()) {
             *pixel = SYSTEM_PALETTE[usize::from(value)];
         }
@@ -98,11 +109,14 @@ fn start_audio(queue: Arc<Mutex<VecDeque<f32>>>) -> (cpal::Stream, u32) {
     (stream, sample_rate)
 }
 
-/// Once `queue` holds more than `max` samples, drops the oldest down to `target`.
-fn trim_queue(queue: &mut VecDeque<f32>, max: usize, target: usize) {
-    if queue.len() > max {
-        queue.drain(..queue.len() - target);
-    }
+const NES_FPS: f64 = 60.0988;
+
+/// Raises the emulated sample rate when the queue is short and lowers it when long,
+/// by at most 0.5%, so the queue settles at `target` without audible pitch change.
+fn adjusted_rate(base: u32, queued: usize, target: usize) -> u32 {
+    let error = (target as f64 - queued as f64) / target as f64;
+    let factor = 1.0 + (error * 0.005).clamp(-0.005, 0.005);
+    (f64::from(base) * factor).round() as u32
 }
 
 /// Removes the DC offset: the mixer outputs 0.0..=1.0, so silence would sit at a
@@ -127,16 +141,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn trim_queue_leaves_short_queues_alone() {
-        let mut queue: VecDeque<f32> = (0..10).map(|n| n as f32).collect();
-        trim_queue(&mut queue, 10, 5);
-        assert_eq!(queue.len(), 10);
+    fn rate_unchanged_at_target() {
+        assert_eq!(adjusted_rate(48_000, 2_400, 2_400), 48_000);
     }
 
     #[test]
-    fn trim_queue_drops_oldest_down_to_target() {
-        let mut queue: VecDeque<f32> = (0..11).map(|n| n as f32).collect();
-        trim_queue(&mut queue, 10, 5);
-        assert_eq!(queue, [6.0, 7.0, 8.0, 9.0, 10.0]);
+    fn rate_rises_when_queue_is_short() {
+        assert_eq!(adjusted_rate(48_000, 1_200, 2_400), 48_120);
+    }
+
+    #[test]
+    fn rate_falls_when_queue_is_long() {
+        assert_eq!(adjusted_rate(48_000, 3_600, 2_400), 47_880);
+    }
+
+    #[test]
+    fn rate_change_is_clamped() {
+        assert_eq!(adjusted_rate(48_000, 0, 2_400), 48_240);
+        assert_eq!(adjusted_rate(48_000, 24_000, 2_400), 47_760);
     }
 }
