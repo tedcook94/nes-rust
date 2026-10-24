@@ -6,7 +6,7 @@ use pulse::LENGTH_TABLE;
 
 /// Sets pulse 1 to the given duty, constant volume 15, timer period 8, and a long note.
 fn playing_pulse(apu: &mut Apu, duty: u8) {
-    apu.write_register(0x4000, (duty << 6) | 0x0F);
+    apu.write_register(0x4000, (duty << 6) | 0x1F);
     apu.write_register(0x4002, 0x08);
     apu.write_register(0x4003, 0x08); // length index 1: 254
 }
@@ -32,8 +32,9 @@ fn register_0_sets_duty_halt_and_volume() {
     let mut apu = Apu::new();
     apu.write_register(0x4000, 0b10_1_1_0111);
     assert_eq!(apu.pulse1.duty, 2);
-    assert!(apu.pulse1.halt_length);
-    assert_eq!(apu.pulse1.volume, 7);
+    assert!(apu.pulse1.envelope.looping);
+    assert!(apu.pulse1.envelope.constant);
+    assert_eq!(apu.pulse1.envelope.value, 7);
 }
 
 #[test]
@@ -64,11 +65,11 @@ fn register_3_restarts_the_sequencer() {
 #[test]
 fn pulse_2_has_its_own_registers() {
     let mut apu = Apu::new();
-    apu.write_register(0x4004, 0b01_0_0_0011);
+    apu.write_register(0x4004, 0b01_0_1_0011);
     apu.write_register(0x4006, 0x34);
     apu.write_register(0x4007, 0x0A);
     assert_eq!(apu.pulse2.duty, 1);
-    assert_eq!(apu.pulse2.volume, 3);
+    assert_eq!(apu.pulse2.envelope.value, 3);
     assert_eq!(apu.pulse2.timer_period, 0x234);
     assert_eq!(apu.pulse1.timer_period, 0);
 }
@@ -135,7 +136,7 @@ fn length_counter_counts_down_to_zero_and_silences() {
 #[test]
 fn halt_flag_freezes_length_counter() {
     let mut apu = Apu::new();
-    apu.write_register(0x4000, 0x20);
+    apu.write_register(0x4000, 0x30);
     apu.write_register(0x4003, 0x08);
     apu.pulse1.clock_length();
     assert_eq!(apu.pulse1.length, 254);
@@ -145,7 +146,7 @@ fn halt_flag_freezes_length_counter() {
 fn output_is_volume_when_waveform_is_high() {
     let mut apu = Apu::new();
     playing_pulse(&mut apu, 3);
-    apu.write_register(0x4000, 0b11_0_0_1001);
+    apu.write_register(0x4000, 0b11_0_1_1001);
     assert_eq!(apu.pulse1.output(), 9);
 }
 
@@ -157,4 +158,206 @@ fn periods_below_8_are_silenced() {
     assert_eq!(apu.pulse1.output(), 0);
     apu.write_register(0x4002, 0x08);
     assert_eq!(apu.pulse1.output(), 15);
+}
+
+fn tick_n(apu: &mut Apu, cycles: u32) {
+    for _ in 0..cycles {
+        apu.tick();
+    }
+}
+
+// Envelope
+
+#[test]
+fn envelope_start_sets_decay_to_15() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4000, 0x02); // decay mode, period 2
+    apu.write_register(0x4003, 0x08);
+    assert!(apu.pulse1.envelope.start);
+    apu.pulse1.envelope.clock();
+    assert!(!apu.pulse1.envelope.start);
+    assert_eq!(apu.pulse1.envelope.decay, 15);
+}
+
+#[test]
+fn envelope_decays_every_period_plus_one_clocks() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4000, 0x02);
+    apu.write_register(0x4003, 0x08);
+    let envelope = &mut apu.pulse1.envelope;
+    envelope.clock();
+    let decays: Vec<u8> = (0..6)
+        .map(|_| {
+            envelope.clock();
+            envelope.decay
+        })
+        .collect();
+    assert_eq!(decays, [15, 15, 14, 14, 14, 13]);
+}
+
+#[test]
+fn envelope_stops_at_zero_without_loop() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4000, 0x00);
+    apu.write_register(0x4003, 0x08);
+    for _ in 0..20 {
+        apu.pulse1.envelope.clock();
+    }
+    assert_eq!(apu.pulse1.envelope.decay, 0);
+}
+
+#[test]
+fn envelope_loop_wraps_zero_to_15() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4000, 0x20);
+    apu.write_register(0x4003, 0x08);
+    for _ in 0..16 {
+        apu.pulse1.envelope.clock();
+    }
+    assert_eq!(apu.pulse1.envelope.decay, 0);
+    apu.pulse1.envelope.clock();
+    assert_eq!(apu.pulse1.envelope.decay, 15);
+}
+
+#[test]
+fn output_uses_decay_level_when_not_constant() {
+    let mut apu = Apu::new();
+    playing_pulse(&mut apu, 3);
+    apu.write_register(0x4000, 0b11_0_0_0000);
+    apu.pulse1.envelope.clock();
+    apu.pulse1.envelope.clock();
+    assert_eq!(apu.pulse1.output(), 14);
+}
+
+// Sweep
+
+#[test]
+fn register_1_sets_sweep_fields() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4001, 0b1_101_1_011);
+    let sweep = &apu.pulse1.sweep;
+    assert!(sweep.enabled);
+    assert_eq!(sweep.period, 5);
+    assert!(sweep.negate);
+    assert_eq!(sweep.shift, 3);
+    assert!(sweep.reload);
+}
+
+#[test]
+fn sweep_target_adds_shifted_period() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4002, 0x00);
+    apu.write_register(0x4003, 0x01); // period $100
+    apu.write_register(0x4001, 0b1_000_0_010);
+    assert_eq!(apu.pulse1.sweep_target(), 0x140);
+}
+
+#[test]
+fn sweep_negate_differs_between_pulse_channels() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x01);
+    apu.write_register(0x4001, 0b1_000_1_010);
+    apu.write_register(0x4007, 0x01);
+    apu.write_register(0x4005, 0b1_000_1_010);
+    assert_eq!(apu.pulse1.sweep_target(), 0xBF, "ones' complement");
+    assert_eq!(apu.pulse2.sweep_target(), 0xC0, "two's complement");
+}
+
+#[test]
+fn sweep_updates_period_when_divider_reaches_zero() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x01);
+    apu.write_register(0x4001, 0b1_001_0_001); // period 1, shift 1
+    apu.pulse1.clock_sweep(); // reload, divider 0 so it also sweeps
+    assert_eq!(apu.pulse1.timer_period, 0x180);
+    apu.pulse1.clock_sweep();
+    assert_eq!(apu.pulse1.timer_period, 0x180, "divider was reloaded to 1");
+    apu.pulse1.clock_sweep();
+    assert_eq!(apu.pulse1.timer_period, 0x240);
+}
+
+#[test]
+fn sweep_does_nothing_with_shift_0_or_disabled() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x01);
+    apu.write_register(0x4001, 0b1_000_0_000);
+    apu.pulse1.clock_sweep();
+    assert_eq!(apu.pulse1.timer_period, 0x100);
+    apu.write_register(0x4001, 0b0_000_0_001);
+    apu.pulse1.clock_sweep();
+    assert_eq!(apu.pulse1.timer_period, 0x100);
+}
+
+#[test]
+fn sweep_target_over_7ff_mutes_even_when_disabled() {
+    let mut apu = Apu::new();
+    playing_pulse(&mut apu, 3);
+    apu.write_register(0x4002, 0xFF);
+    apu.write_register(0x4003, 0x0D); // period $5FF, length index 1
+    apu.write_register(0x4001, 0b0_000_0_010);
+    assert_eq!(apu.pulse1.output(), 15, "target $77E");
+    apu.write_register(0x4001, 0b0_000_0_001);
+    assert_eq!(apu.pulse1.output(), 0, "target $8FE");
+    apu.write_register(0x4001, 0b0_000_0_000);
+    assert_eq!(apu.pulse1.output(), 0, "shift 0 still mutes: target $BFE");
+}
+
+// Frame counter
+
+#[test]
+fn four_step_mode_clocks_envelopes_each_quarter() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4000, 0x00); // decay period 0: one step per clock
+    apu.write_register(0x4003, 0x08);
+    tick_n(&mut apu, STEP_1 - 1);
+    assert!(apu.pulse1.envelope.start);
+    tick_n(&mut apu, 1);
+    assert_eq!(apu.pulse1.envelope.decay, 15);
+    tick_n(&mut apu, STEP_2 - STEP_1);
+    assert_eq!(apu.pulse1.envelope.decay, 14);
+    tick_n(&mut apu, STEP_3 - STEP_2);
+    assert_eq!(apu.pulse1.envelope.decay, 13);
+    tick_n(&mut apu, FOUR_STEP_END - STEP_3);
+    assert_eq!(apu.pulse1.envelope.decay, 12);
+    tick_n(&mut apu, STEP_1);
+    assert_eq!(apu.pulse1.envelope.decay, 11, "sequence restarts");
+}
+
+#[test]
+fn four_step_mode_clocks_length_on_steps_2_and_4() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x08); // 254
+    tick_n(&mut apu, STEP_2 - 1);
+    assert_eq!(apu.pulse1.length, 254);
+    tick_n(&mut apu, 1);
+    assert_eq!(apu.pulse1.length, 253);
+    tick_n(&mut apu, FOUR_STEP_END - STEP_2);
+    assert_eq!(apu.pulse1.length, 252);
+}
+
+#[test]
+fn five_step_mode_has_a_longer_sequence() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x08);
+    apu.write_register(0x4017, 0x80);
+    assert_eq!(
+        apu.pulse1.length, 253,
+        "writing 5-step mode clocks immediately"
+    );
+    tick_n(&mut apu, STEP_2);
+    assert_eq!(apu.pulse1.length, 252);
+    tick_n(&mut apu, FOUR_STEP_END - STEP_2);
+    assert_eq!(apu.pulse1.length, 252, "nothing at the 4-step end");
+    tick_n(&mut apu, FIVE_STEP_END - FOUR_STEP_END);
+    assert_eq!(apu.pulse1.length, 251);
+}
+
+#[test]
+fn writing_4017_resets_the_sequence() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4003, 0x08);
+    tick_n(&mut apu, STEP_2 - 10);
+    apu.write_register(0x4017, 0x00);
+    tick_n(&mut apu, 10);
+    assert_eq!(apu.pulse1.length, 254);
 }

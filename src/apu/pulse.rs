@@ -1,3 +1,5 @@
+use super::envelope::Envelope;
+
 const DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0], // 12.5%
     [0, 1, 1, 0, 0, 0, 0, 0], // 25%
@@ -10,23 +12,42 @@ pub(super) const LENGTH_TABLE: [u8; 32] = [
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
 ];
 
+pub(super) struct Sweep {
+    pub(super) enabled: bool,
+    pub(super) period: u8,
+    pub(super) negate: bool,
+    pub(super) shift: u8,
+    pub(super) reload: bool,
+    pub(super) divider: u8,
+}
+
 pub(super) struct Pulse {
+    /// Pulse 1 negates with ones' complement (subtracting one extra); pulse 2 with two's.
+    ones_complement: bool,
     pub(super) duty: u8,
     pub(super) step: u8,
-    pub(super) halt_length: bool,
-    pub(super) volume: u8,
+    pub(super) envelope: Envelope,
+    pub(super) sweep: Sweep,
     pub(super) timer_period: u16,
     pub(super) timer: u16,
     pub(super) length: u8,
 }
 
 impl Pulse {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(ones_complement: bool) -> Self {
         Pulse {
+            ones_complement,
             duty: 0,
             step: 0,
-            halt_length: false,
-            volume: 0,
+            envelope: Envelope::new(),
+            sweep: Sweep {
+                enabled: false,
+                period: 0,
+                negate: false,
+                shift: 0,
+                reload: false,
+                divider: 0,
+            },
             timer_period: 0,
             timer: 0,
             length: 0,
@@ -38,15 +59,21 @@ impl Pulse {
         match register {
             0 => {
                 self.duty = value >> 6;
-                self.halt_length = value & 0x20 != 0;
-                self.volume = value & 0x0F;
+                self.envelope.write(value);
             }
-            1 => {} // sweep: not yet
+            1 => {
+                self.sweep.enabled = value & 0x80 != 0;
+                self.sweep.period = (value >> 4) & 0x07;
+                self.sweep.negate = value & 0x08 != 0;
+                self.sweep.shift = value & 0x07;
+                self.sweep.reload = true;
+            }
             2 => self.timer_period = (self.timer_period & 0x0700) | u16::from(value),
             3 => {
                 self.timer_period = (self.timer_period & 0x00FF) | (u16::from(value & 0x07) << 8);
                 self.length = LENGTH_TABLE[usize::from(value >> 3)];
                 self.step = 0;
+                self.envelope.start = true;
             }
             _ => unreachable!("pulse register {register}"),
         }
@@ -62,14 +89,38 @@ impl Pulse {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "clocked by the frame counter in the next commit")
-    )]
     pub(super) fn clock_length(&mut self) {
-        if !self.halt_length && self.length > 0 {
+        if !self.envelope.looping && self.length > 0 {
             self.length -= 1;
         }
+    }
+
+    pub(super) fn clock_sweep(&mut self) {
+        if self.sweep.divider == 0 && self.sweep.enabled && self.sweep.shift > 0 && !self.muted() {
+            self.timer_period = self.sweep_target();
+        }
+        if self.sweep.divider == 0 || self.sweep.reload {
+            self.sweep.divider = self.sweep.period;
+            self.sweep.reload = false;
+        } else {
+            self.sweep.divider -= 1;
+        }
+    }
+
+    pub(super) fn sweep_target(&self) -> u16 {
+        let change = self.timer_period >> self.sweep.shift;
+        if self.sweep.negate {
+            let extra = u16::from(self.ones_complement);
+            self.timer_period.saturating_sub(change + extra)
+        } else {
+            self.timer_period + change
+        }
+    }
+
+    /// The sweep unit mutes the channel even when disabled, so it can't sweep out of range.
+    fn muted(&self) -> bool {
+        // Periods under 8 would be ultrasonic.
+        self.timer_period < 8 || self.sweep_target() > 0x7FF
     }
 
     #[cfg_attr(
@@ -77,10 +128,9 @@ impl Pulse {
         expect(dead_code, reason = "read by the mixer in a later commit")
     )]
     pub(super) fn output(&self) -> u8 {
-        // Periods under 8 would be ultrasonic; the hardware silences them.
-        if self.length == 0 || self.timer_period < 8 {
+        if self.length == 0 || self.muted() {
             return 0;
         }
-        DUTY_TABLE[usize::from(self.duty)][usize::from(self.step)] * self.volume
+        DUTY_TABLE[usize::from(self.duty)][usize::from(self.step)] * self.envelope.volume()
     }
 }
