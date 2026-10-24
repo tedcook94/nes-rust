@@ -35,6 +35,10 @@ const CTRL_INCREMENT_32: u8 = 0b0000_0100;
 const CTRL_SPRITE_TABLE: u8 = 0b0000_1000;
 const CTRL_BACKGROUND_TABLE: u8 = 0b0001_0000;
 const CTRL_SPRITE_8X16: u8 = 0b0010_0000;
+/// When clear, the leftmost 8 pixels show the backdrop instead. Games use this to hide
+/// tiles being updated at the edge while scrolling.
+const MASK_LEFT_BACKGROUND: u8 = 0b0000_0010;
+const MASK_LEFT_SPRITES: u8 = 0b0000_0100;
 const MASK_SHOW_BACKGROUND: u8 = 0b0000_1000;
 const MASK_SHOW_SPRITES: u8 = 0b0001_0000;
 
@@ -222,7 +226,12 @@ impl Ppu {
 
         let start = usize::from(self.fine_x);
         let row = usize::from(y) * WIDTH;
-        for x in 0..WIDTH {
+        let first_x = if self.mask & MASK_LEFT_BACKGROUND == 0 {
+            8
+        } else {
+            0
+        };
+        for x in first_x..WIDTH {
             if line_opaque[start + x] {
                 self.frame[row + x] = line[start + x];
                 opaque[x] = true;
@@ -249,6 +258,11 @@ impl Ppu {
         // The lowest-index opaque sprite pixel claims each screen pixel, even when its
         // priority then hides it behind the background.
         let mut claimed = [false; WIDTH];
+        let first_x = if self.mask & MASK_LEFT_SPRITES == 0 {
+            8
+        } else {
+            0
+        };
         let (sprites, _) = self.oam.as_chunks::<4>();
         for (index, &[sprite_y, tile, attributes, sprite_x]) in sprites.iter().enumerate() {
             // Sprites appear one scanline below their OAM Y.
@@ -272,7 +286,7 @@ impl Ppu {
 
             for (offset, &color) in colors.iter().enumerate() {
                 let x = usize::from(sprite_x) + offset;
-                if color == 0 || x >= WIDTH {
+                if color == 0 || x < first_x || x >= WIDTH {
                     continue;
                 }
                 // Hardware never reports a hit at x = 255.

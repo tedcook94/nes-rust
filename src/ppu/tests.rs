@@ -614,7 +614,7 @@ fn set_palettes(ppu: &mut Ppu, mapper: &mut TestMapper) {
 }
 
 fn enable_background(ppu: &mut Ppu, mapper: &mut TestMapper) {
-    ppu.write_register(0x2001, 0b0000_1000, mapper);
+    ppu.write_register(0x2001, 0b0000_1010, mapper);
 }
 
 #[test]
@@ -841,7 +841,7 @@ fn set_sprite_palettes(ppu: &mut Ppu, mapper: &mut TestMapper) {
 }
 
 fn enable_sprites(ppu: &mut Ppu, mapper: &mut TestMapper) {
-    ppu.write_register(0x2001, ppu.mask | 0b0001_0000, mapper);
+    ppu.write_register(0x2001, ppu.mask | 0b0001_0100, mapper);
 }
 
 fn set_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attributes: u8, x: u8) {
@@ -1481,4 +1481,50 @@ fn no_scanline_clock_while_rendering_is_disabled() {
     let mut ppu = Ppu::new();
     let mapper = TestMapper::new(Mirroring::Horizontal);
     assert_eq!(count_scanline_clocks(&mut ppu, &mapper), 0);
+}
+
+// Left-column masking
+
+#[test]
+fn left_background_mask_shows_backdrop_in_first_8_pixels() {
+    // Tile 1 row 0 is 0,1,2,3,0,1,2,3 in both column 0 and column 1.
+    let mut ppu = Ppu::new();
+    let mut mapper = mapper_with_test_tile(0);
+    set_palettes(&mut ppu, &mut mapper);
+    ppu.write(0x2000, 0x01, &mut mapper);
+    ppu.write(0x2001, 0x01, &mut mapper);
+    ppu.write_register(0x2001, 0b0000_1000, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert_eq!(pixel(&ppu, 1, 0), 0x0F, "masked");
+    assert_eq!(pixel(&ppu, 9, 0), 0x01, "column 1 still drawn");
+}
+
+#[test]
+fn left_sprite_mask_hides_sprites_in_first_8_pixels() {
+    let (mut ppu, mut mapper) = sprite_ppu();
+    ppu.oam[0..4].copy_from_slice(&[0, 1, 0, 4]); // x 4..=11
+    ppu.write_register(0x2001, 0b0001_0000, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    let row: Vec<u8> = (4..12).map(|x| pixel(&ppu, x, 1)).collect();
+    assert_eq!(row[..4], [0x0F; 4], "x 4-7 masked");
+    assert_ne!(row[4..], [0x0F; 4], "x 8-11 drawn");
+}
+
+#[test]
+fn no_sprite_zero_hit_in_masked_column() {
+    // Sprite 0 overlaps opaque background only at x 0-7.
+    let (mut ppu, mut mapper) = sprite_ppu();
+    for column in 0..32 {
+        ppu.write(0x2000 + column, 0x01, &mut mapper);
+    }
+    ppu.oam[0..4].copy_from_slice(&[0, 1, 0, 0]);
+    ppu.write_register(0x2001, 0b0001_1000, &mut mapper);
+
+    render(&mut ppu, &mapper);
+    assert!(!ppu.sprite_zero_hit);
+    ppu.write_register(0x2001, 0b0001_1110, &mut mapper);
+    render_second_frame(&mut ppu, &mapper);
+    assert!(ppu.sprite_zero_hit);
 }
